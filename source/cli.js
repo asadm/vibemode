@@ -304,27 +304,47 @@ const App = () => {
                 }
             }, 50); // Small delay for UI update
 
-        } else if (trimmedQuery !== '') { // Process glob (unchanged)
+        } else if (trimmedQuery !== '') { // Process glob
+            let globPatternToUse = trimmedQuery; // The pattern we'll actually use
+            let isDirectoryExpansion = false;
+
+            // --- START MODIFICATION ---
             try {
-                // Ensure ignore patterns are fresh if needed, though useMemo handles this
+                // Check if the input query *is* a directory
+                const potentialDirPath = path.resolve(process.cwd(), trimmedQuery);
+                if (fs.existsSync(potentialDirPath) && fs.statSync(potentialDirPath).isDirectory()) {
+                    // It's a directory, modify the glob pattern
+                    globPatternToUse = path.join(trimmedQuery, '**', '*').replace(/\\/g, '/'); // Ensure cross-platform slashes for glob
+                    isDirectoryExpansion = true;
+                    logger.info(`Input "${trimmedQuery}" detected as directory. Using glob pattern: ${globPatternToUse}`);
+                }
+            } catch (statError) {
+                // Ignore errors like permission denied, just proceed with the original query
+                logger.warn(`Could not stat input "${trimmedQuery}" to check if it's a directory: ${statError.message}. Proceeding with original query.`);
+            }
+            // --- END MODIFICATION ---
+
+            try {
+                // Use globPatternToUse instead of trimmedQuery here
                 const globOptions = { nodir: true, cwd: process.cwd(), ignore: ignorePatterns, dot: true };
-                const foundFiles = globSync(trimmedQuery, globOptions);
+                const foundFiles = globSync(globPatternToUse, globOptions);
                 const currentFileCount = collectedFiles.size;
                 const updatedFiles = new Set([...collectedFiles, ...foundFiles]); // Add new files to the set
                 const newFilesAdded = updatedFiles.size - currentFileCount;
                 setCollectedFiles(updatedFiles);
 
-                let message = `Found ${foundFiles.length} matches for "${trimmedQuery}". Added ${newFilesAdded} new file(s). Total: ${updatedFiles.size}.`;
-                if (ignorePatterns.length > 0) message += ' (.gitignore respected)';
-                message += ' Enter next glob or leave empty and press Enter to finish.';
+                let message = `Found ${foundFiles.length} matches for "${globPatternToUse}"${isDirectoryExpansion ? ` (expanded from directory "${trimmedQuery}")` : ""}. Added ${newFilesAdded} new file(s). Total: ${updatedFiles.size}.`;
+                if (ignorePatterns.length > 0) message += " (.gitignore respected)";
+                message += " Enter next glob or leave empty and press Enter to finish.";
                 setSafeStatusMessage(message);
             } catch (error) { // Handle glob error
-                setSafeStatusMessage(`Error processing glob "${trimmedQuery}": ${error.message}. Please try again.`);
-                logger.error(`\nError processing glob "${trimmedQuery}":`, error);
+                // Use globPatternToUse in the error message for clarity
+                setSafeStatusMessage(`Error processing glob "${globPatternToUse}"${isDirectoryExpansion ? ` (expanded from directory "${trimmedQuery}")` : ""}: ${error.message}. Please try again.`);
+                logger.error(`\nError processing glob "${globPatternToUse}" (original input: "${trimmedQuery}"):`, error);
             }
-            setGlobQuery(''); // Clear input field after submission
+            setGlobQuery(""); // Clear input field after submission
         } else { // Empty query, no files collected yet (unchanged)
-            setSafeStatusMessage('No files collected yet. Please enter a glob pattern to find files.');
+            setSafeStatusMessage("No files collected yet. Please enter a glob pattern or directory name to find files.");
         }
     };
 
