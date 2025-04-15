@@ -17,6 +17,8 @@ ALWAYS use the full path, use the files structure to find the right file path ot
 All changes to files must use this *SEARCH/REPLACE block* format.
 ONLY EVER RETURN CODE IN A *SEARCH/REPLACE BLOCK*!
 
+The user request may have changes not related to this file, SKIP THOSE IN YOUR RESPONSE.
+
 EXAMPLE:
 
 User: Change get_factorial() to use math.factorial
@@ -76,7 +78,7 @@ function getOpenai(){
     return openai;
 }
 
-export async function applyEdit(content, filePath){
+export async function applyEdit(content, filePath, lastResponse, errorsFromLastResponse){
     const openai = getOpenai();
     const response = await openai.chat.completions.create({
         model: "gemini-2.0-flash",
@@ -86,6 +88,14 @@ export async function applyEdit(content, filePath){
                 role: "user",
                 content: content,
             },
+            lastResponse && {
+                role: "assistant",
+                content: lastResponse,
+            },
+            lastResponse && errorsFromLastResponse && {
+                role: "user",
+                content: errorsFromLastResponse + "\n\nPlease respond with all changes again correctly formatted as a *SEARCH/REPLACE block* per the examples above.",
+            }
         ],
     });
 

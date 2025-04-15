@@ -9,6 +9,7 @@ import path from 'path';
 import readline from 'readline'; // Needed for emitKeypressEvents
 import clipboardy from 'clipboardy'; // <-- Import clipboardy
 import { applyEdit, getModifiedFiles } from './editor.js'; // Ensure applyEdit is imported
+import { writeDiff } from './writeDiff.js';
 
 // Helper function to escape XML special characters
 const escapeXml = (unsafe) => {
@@ -366,6 +367,16 @@ const App = () => {
             const editPromises = filePaths.map(async (filePath) => {
                 try {
                     const result = await applyEdit(trimmedContent, filePath); // Apply the edit
+                    const errors = await writeDiff(filePath, result);
+                    if (errors) {
+                        // We retry one more time along with error as reported by writeDiff
+                        const retryResult = await applyEdit(trimmedContent, filePath, result, errors);
+                        const retryErrors = await writeDiff(filePath, retryResult);
+                        if (retryErrors) {
+                            console.error(`\nError applying edit to ${filePath}:`, retryErrors);
+                            throw new Error(retryErrors);
+                        }
+                    }
                     // Update state for *this* file to 'done' on success
                     // Use functional update to avoid race conditions with rapid updates
                     setFileEditStatus(prevStatus => ({ ...prevStatus, [filePath]: 'done' }));
