@@ -22,6 +22,7 @@
 		"ink-select-input": "^6.0.0",
 		"ink-text-input": "^6.0.0",
 		"meow": "^11.0.0",
+		"openai": "^4.94.0",
 		"react": "^18.2.0"
 	},
 	"devDependencies": {
