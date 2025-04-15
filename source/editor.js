@@ -4,7 +4,7 @@ import { z } from "zod";
 
 const fence = "`"
 
-const systemPrompt = `Act as an expert software developer.
+const systemPrompt = (filePath) => `Act as an expert software developer.
 Always use best practices when coding.
 Respect and use existing conventions, libraries, etc that are already present in the code base.
 
@@ -21,7 +21,7 @@ EXAMPLE:
 
 User: Change get_factorial() to use math.factorial
 Assistant:
-To make this change we need to modify ${fence}mathweb/flask/app.py${fence} to:
+To make this change we need to modify ${fence}${filePath}${fence} to:
 
 1. Import the math package.
 2. Remove the existing factorial() function.
@@ -30,7 +30,6 @@ To make this change we need to modify ${fence}mathweb/flask/app.py${fence} to:
 Here are the *SEARCH/REPLACE* blocks:
 
 ${fence}${fence}${fence}python
-mathweb/flask/app.py
 <<<<<<< SEARCH
 from flask import Flask
 =======
@@ -40,7 +39,6 @@ from flask import Flask
 ${fence}${fence}${fence}
 
 ${fence}${fence}${fence}python
-mathweb/flask/app.py
 <<<<<<< SEARCH
 def factorial(n):
     "compute factorial"
@@ -55,7 +53,6 @@ def factorial(n):
 ${fence}${fence}${fence}
 
 ${fence}${fence}${fence}python
-mathweb/flask/app.py
 <<<<<<< SEARCH
     return str(factorial(n))
 =======
@@ -84,7 +81,7 @@ export async function applyEdit(content, filePath){
     const response = await openai.chat.completions.create({
         model: "gemini-2.0-flash",
         messages: [
-            { role: "system", content: systemPrompt },
+            { role: "system", content: systemPrompt(filePath) },
             {
                 role: "user",
                 content: content,
@@ -114,5 +111,5 @@ export async function getModifiedFiles(userRequest){
     });
 
     // console.log(response.choices[0].message);
-    return response.choices[0].message.content;
+    return JSON.parse(response.choices[0].message.content);
 }

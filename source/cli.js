@@ -335,9 +335,8 @@ const App = () => {
         setSafeStatusMessage('Saving pasted content to paste.txt...');
 
         
-        const filesModified = await getModifiedFiles(trimmedContent);
-
-        fs.writeFile('paste.txt', filesModified, (err) => {
+        const {filePaths} = await getModifiedFiles(trimmedContent);
+        fs.writeFile('paste.txt', JSON.stringify(filePaths), (err) => {
             if (err) {
                  console.error("\nError saving paste.txt:", err);
                  setMode('error'); // Show error state
