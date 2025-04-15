@@ -13,8 +13,9 @@ const escapeXml = (unsafe) => {
     if (typeof unsafe !== 'string') {
         try { return String(unsafe); } catch (e) { console.warn(`Warning: Could not convert value to string for XML escaping: ${unsafe}`); return ''; }
     }
-    // Use a map for replacement for clarity and potential performance
-    return unsafe.replace(/[<>&'"]/g, c => ({'<':'<', '>':'>', '&':'&', '\'':"'", '"':'"'}[c] || c));
+    // Simple replacement map
+    const map = {'<': '<', '>': '>', '&': '&', "'": "'", '"': '"'};
+    return unsafe.replace(/[<>&'"]/g, c => map[c]);
 };
 
 const App = () => {
@@ -47,6 +48,7 @@ const App = () => {
                 .split(/\r?\n/)
                 .map(l => l.trim())
                 .filter(l => l && !l.startsWith('#'))
+                // Basic handling for directories listed in gitignore
                 .flatMap(l => (!l.includes('*') && !l.includes('/') && !l.startsWith('!')) ? [l, `${l}/**`] : [l]);
         } catch (error) {
             if (error.code !== 'ENOENT') {
@@ -58,36 +60,47 @@ const App = () => {
 
     // --- Input Hooks ---
     useInput((input, key) => {
-        if (key.escape && mode === 'globInput') {
+        // Global Escape handler for relevant modes
+        if (key.escape && (mode === 'globInput' || mode === 'applyInput')) {
+            if (mode === 'applyInput') {
+                // Special handling for applyInput escape
+                clearSaveTimer(); // Important: Stop any pending save
+                // restoreInput() will be called by the useEffect cleanup
+            }
             setMode('menu');
             setGlobQuery('');
-            setStatusMessage('');
+            setStatusMessage(mode === 'globInput' ? 'Glob input cancelled.' : 'Paste operation cancelled.');
+            setApplyInputStatus(''); // Clear apply status too
         }
     }, {
-        isActive: mode === 'globInput'
+        // Apply this hook only when in globInput or applyInput mode
+        isActive: mode === 'globInput' || mode === 'applyInput'
     });
 
     // --- Helper Functions ---
     const clearSaveTimer = () => {
-        let didClearTimers = false;
-        if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; didClearTimers = true; }
+        // Clear the save timeout first
+        if (saveTimerRef.current) {
+            clearTimeout(saveTimerRef.current);
+            saveTimerRef.current = null;
+        }
+        // Clear the countdown interval
         if (countdownIntervalRef.current) {
-             // console.log(`[clearSaveTimer] Clearing Interval ID: ${countdownIntervalRef.current}`); // Optional Log
              clearInterval(countdownIntervalRef.current);
              countdownIntervalRef.current = null; // Clear the ref immediately
-             didClearTimers = true;
         }
-        if (countdown !== null) {
-             // console.log(`[clearSaveTimer] Countdown state is ${countdown}. Setting to null.`); // Optional Log
-             setCountdown(null); // Reset UI state
-        } else if (didClearTimers) { /* Optional log if timers cleared but UI was already null */ }
+        // Always attempt to set countdown state to null when timers are cleared.
+        // React handles the case where the state is already null gracefully (no extra render).
+        setCountdown(null);
     };
 
+    // Make sure status messages are always strings to prevent React errors
     const setSafeStatusMessage = (msg) => setStatusMessage(String(msg ?? ''));
     const setSafeApplyInputStatus = (msg) => setApplyInputStatus(String(msg ?? ''));
 
-    // --- Effect for Raw Input Handling ---
+    // --- Effect for Raw Input Handling (Apply Mode) ---
     useEffect(() => {
+        // Defined within useEffect to capture dependencies correctly
         const restoreInput = () => {
              if (!isHandlingRawInput.current) return;
              clearSaveTimer(); // Ensure timer is cleared on cleanup
@@ -99,59 +112,72 @@ const App = () => {
              }
              isHandlingRawInput.current = false;
              originalRawMode.current = null;
-             setSafeApplyInputStatus('');
+            // Don't clear applyInputStatus here, let handlePasteSave or escape handler manage it
          };
 
          const handleKeyPress = (str, key) => {
-            // --- ANY key press cancels the pending save ---
-            clearSaveTimer(); // Clears timers AND attempts to setCountdown(null)
+           // ANY key press cancels the pending save (except Enter itself which restarts it)
+           if (key?.name !== 'return') {
+             clearSaveTimer(); // Clears timers AND sets countdown state to null
+           }
 
-           if (!key) { return; }
+           if (!key) { return; } // Should generally not happen with emitKeypressEvents
            if (key.ctrl && key.name === 'c') { restoreInput(); exit(new Error("Interrupted by Ctrl+C.")); return; }
-           if (key.escape || key.name === 'escape') { restoreInput(); setMode('menu'); setSafeStatusMessage('Paste operation cancelled.'); return; }
+           // Escape is handled by the general useInput hook now
 
            const isEnter = key.name === 'return';
 
-           if (isEnter) { // Start countdown/timer
+           if (isEnter) { // Start/Restart countdown/timer
+               clearSaveTimer(); // Clear any existing timers first
                pasteInputRef.current += '\n';
                setSafeApplyInputStatus(`Input pause detected. Finalizing...`);
                setCountdown(3); // Start display at 3
 
                // Interval with Self-Check
                const intervalId = setInterval(() => {
-                   if (countdownIntervalRef.current !== intervalId) { clearInterval(intervalId); return; }
+                   // Check if this specific interval is still the current one
+                   if (countdownIntervalRef.current !== intervalId) {
+                       clearInterval(intervalId); // Stop this interval if it's been superseded
+                       return;
+                    }
                    setCountdown(prev => (prev !== null && prev > 1 ? prev - 1 : null));
                }, 500);
-               countdownIntervalRef.current = intervalId;
+               countdownIntervalRef.current = intervalId; // Store the new interval ID
 
-               // Save Timeout
+               // Save Timeout (associated with the current Enter press)
                saveTimerRef.current = setTimeout(() => {
-                   if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
-                   saveTimerRef.current = null;
-                   setCountdown(null); // Ensure state cleared on timeout completion
+                    // Check if this timeout corresponds to the latest interval
+                    if (countdownIntervalRef.current === intervalId) {
+                        clearInterval(countdownIntervalRef.current);
+                        countdownIntervalRef.current = null;
+                    }
+                    saveTimerRef.current = null; // Clear this timeout ref
+                    setCountdown(null); // Ensure UI state is cleared
 
-                   const contentToSave = pasteInputRef.current;
-                   restoreInput();
-                   handlePasteSave(contentToSave);
-               }, 3000);
+                    const contentToSave = pasteInputRef.current;
+                    restoreInput(); // Clean up raw mode etc. *before* potentially slow save
+                    handlePasteSave(contentToSave);
+               }, 1500); // Shortened countdown timer (3 * 500ms)
 
            } else { // Handle other non-Enter keys
-                // --- Explicitly set countdown to null here ---
-                // Even though clearSaveTimer was called, this makes it definitive
-                // for this code path.
-                setCountdown(null);
-                // --------------------------------------------
-
+                // Countdown is already cleared by clearSaveTimer() at the top of handleKeyPress if needed
                 let statusUpdate = `Pasting... Len: ${pasteInputRef.current.length}.`;
                 if (key.name === 'backspace') {
                     if (pasteInputRef.current.length > 0) {
                         pasteInputRef.current = pasteInputRef.current.slice(0, -1);
+                        statusUpdate = `Pasting... Len: ${pasteInputRef.current.length}. Save cancelled.`;
+                    } else {
+                        statusUpdate = `Paste buffer empty. Save cancelled.`;
                     }
-                    statusUpdate = `Save cancelled. Pasting... Len: ${pasteInputRef.current.length}.`;
                 } else if (key.name === 'tab') {
-                    pasteInputRef.current += '    ';
-                } else if (str && !key.ctrl && !key.meta && !key.escape) {
+                    pasteInputRef.current += '    '; // Add spaces for tab
+                    statusUpdate = `Pasting... Len: ${pasteInputRef.current.length}. Save cancelled.`;
+                } else if (str && !key.ctrl && !key.meta && !key.escape && key.name !== 'escape') { // Filter out control keys etc.
                     pasteInputRef.current += str;
+                    statusUpdate = `Pasting... Len: ${pasteInputRef.current.length}. Save cancelled.`;
+                } else {
+                    // Some other key was pressed (like shift, ctrl, etc.) - maybe don't update status or provide specific feedback
+                    statusUpdate = `Key '${key.name || str}' pressed. Save cancelled. Pasting... Len: ${pasteInputRef.current.length}.`;
                 }
 
                 setSafeApplyInputStatus(statusUpdate);
@@ -166,21 +192,33 @@ const App = () => {
              if (isHandlingRawInput.current) { return; } // Avoid re-setup
 
              isHandlingRawInput.current = true;
-             pasteInputRef.current = '';
-             setSafeApplyInputStatus('Ready. Paste content. Press Enter when done. Save triggers after 3s pause. ESC cancels.');
+             pasteInputRef.current = ''; // Clear previous paste content
+             setSafeApplyInputStatus('Ready. Paste content now. Press Enter when finished.');
+             setSafeStatusMessage(''); // Clear general status
              originalRawMode.current = stdin.isRaw;
 
-             try { setRawMode(true); }
-             catch(error) { console.error("Setup Error setting raw mode:", error); isHandlingRawInput.current = false; setMode('menu'); setSafeStatusMessage("Error: Failed to set raw mode."); return; }
-
-             readline.emitKeypressEvents(stdin);
-             stdin.on('keypress', handleKeyPress);
+             try {
+                 setRawMode(true);
+                 readline.emitKeypressEvents(stdin); // Ensure keypress events are emitted
+                 stdin.on('keypress', handleKeyPress); // Attach listener
+             } catch (error) {
+                 console.error("Setup Error setting raw mode:", error);
+                 restoreInput(); // Attempt cleanup
+                 setMode('menu');
+                 setSafeStatusMessage("Error: Failed to set raw mode.");
+                 return;
+             }
         } else {
-             if (isHandlingRawInput.current) { restoreInput(); } // Cleanup if mode changes
+             // Cleanup if mode changes *away* from applyInput
+             if (isHandlingRawInput.current) {
+                 restoreInput();
+             }
         }
-        return restoreInput; // Return cleanup function
 
-    }, [mode, stdin, setRawMode, isRawModeSupported, exit]); // Dependencies
+        // Return the cleanup function for when the component unmounts or dependencies change
+        return restoreInput;
+
+    }, [mode, stdin, setRawMode, isRawModeSupported, exit]); // Dependencies for the effect
 
 
     // --- Action Handlers ---
@@ -191,14 +229,13 @@ const App = () => {
         setSafeApplyInputStatus('');
         if (item.value === 'pack') {
              setMode('globInput');
-            let msg = 'Enter glob pattern or Enter to finish.';
-            if (ignorePatterns.length > 0) msg += ' (.gitignore respected)';
-            msg += ' ESC=menu.';
+            let msg = 'Enter glob pattern(s). .gitignore rules are applied.';
             setSafeStatusMessage(msg);
-            setCollectedFiles(new Set()); setGlobQuery('');
+            setCollectedFiles(new Set()); // Reset files when entering pack mode
+            setGlobQuery('');
         } else if (item.value === 'apply') {
-            if (!isRawModeSupported) { setMode('menu'); setSafeStatusMessage("Raw mode not supported."); return; }
-            setMode('applyInput');
+            if (!isRawModeSupported) { setMode('menu'); setSafeStatusMessage("Raw mode not supported for 'Apply'."); return; }
+            setMode('applyInput'); // useEffect will handle setup
         } else if (item.value === 'exit') {
             exit();
         }
@@ -208,146 +245,236 @@ const App = () => {
         const trimmedQuery = query.trim();
         if (trimmedQuery === '' && collectedFiles.size > 0) { // Generate XML
             setMode('processing'); setSafeStatusMessage('Generating pack.xml...');
-            try {
-                const filesArray = Array.from(collectedFiles).sort();
-                let dirStructure = '<directory_structure>\n';
-                filesArray.forEach(file => { dirStructure += `  ${file}\n`; });
-                dirStructure += '</directory_structure>\n\n';
-                let fileContents = '<files>\nThis section contains the contents of the repository\'s files.\n\n';
-                filesArray.forEach(file => {
-                    const filePath = path.resolve(process.cwd(), file);
-                    try {
-                         const stat = fs.statSync(filePath); if (!stat.isFile()) { console.warn(`\nWarn: Skipping non-file: ${file}`); return; }
-                        const content = fs.readFileSync(filePath, 'utf8'); fileContents += `<file path="${escapeXml(file)}">\n${escapeXml(content)}\n</file>\n\n`;
-                    } catch (readError) { fileContents += `<file path="${escapeXml(file)}" error="Could not read file: ${escapeXml(readError.message)}">\n</file>\n\n`; console.error(`\nWarn: Could not read ${file}: ${readError.message}`); }
-                });
-                fileContents += '</files>'; fs.writeFileSync('pack.xml', dirStructure + fileContents);
-                setMode('done'); setSafeStatusMessage('pack.xml created!'); setTimeout(exit, 1500);
-            } catch (error) { // Handle XML generation error
-                setMode('error'); setSafeStatusMessage(`Error gen pack.xml: ${error.message}`); console.error("\nError gen pack.xml:", error); setTimeout(() => exit(error), 3000);
-            }
+            // Use setTimeout to allow Ink to render the "processing" message
+            setTimeout(() => {
+                try {
+                    const filesArray = Array.from(collectedFiles).sort();
+                    let dirStructure = '<directory_structure>\n';
+                    filesArray.forEach(file => { dirStructure += `  ${file}\n`; });
+                    dirStructure += '</directory_structure>\n\n';
+
+                    let fileContents = '<files>\n<!-- This section contains the contents of the collected files. -->\n\n';
+                    filesArray.forEach(file => {
+                        const filePath = path.resolve(process.cwd(), file);
+                        try {
+                             const stat = fs.statSync(filePath);
+                             if (!stat.isFile()) {
+                                 console.warn(`\nWarn: Skipping non-file entry during XML generation: ${file}`);
+                                 fileContents += `<!-- Skipped non-file entry: ${escapeXml(file)} -->\n\n`;
+                                 return;
+                            }
+                            const content = fs.readFileSync(filePath, 'utf8');
+                            fileContents += `<file path="${escapeXml(file)}">\n${escapeXml(content)}\n</file>\n\n`;
+                        } catch (readError) {
+                            fileContents += `<file path="${escapeXml(file)}" error="Could not read file: ${escapeXml(readError.message)}">\n</file>\n\n`;
+                            console.error(`\nWarn: Could not read ${file}: ${readError.message}`);
+                        }
+                    });
+                    fileContents += '</files>';
+
+                    fs.writeFileSync('pack.xml', dirStructure + fileContents);
+                    setMode('done'); setSafeStatusMessage(`pack.xml created successfully with ${collectedFiles.size} files!`);
+                    setTimeout(exit, 2000); // Exit after showing success
+                } catch (error) { // Handle XML generation error
+                    setMode('error'); setSafeStatusMessage(`Error generating pack.xml: ${error.message}`);
+                    console.error("\nError generating pack.xml:", error);
+                    setTimeout(() => exit(error), 3000); // Exit after showing error
+                }
+            }, 50); // Small delay for UI update
+
         } else if (trimmedQuery !== '') { // Process glob
             try {
-                const globOptions = { nodir: true, cwd: process.cwd(), ignore: ignorePatterns, dot: true }; const foundFiles = globSync(trimmedQuery, globOptions); const currentFileCount = collectedFiles.size; const updatedFiles = new Set([...collectedFiles, ...foundFiles]); const newFilesAdded = updatedFiles.size - currentFileCount; setCollectedFiles(updatedFiles);
-                let message = `Found ${foundFiles.length}. Added ${newFilesAdded} new. Total: ${updatedFiles.size}.`; if (ignorePatterns.length > 0) message += ' (.gitignore respected)'; message += ' Enter next glob or Enter to finish. ESC for menu.';
+                // Ensure ignore patterns are fresh if needed, though useMemo handles this
+                const globOptions = { nodir: true, cwd: process.cwd(), ignore: ignorePatterns, dot: true };
+                const foundFiles = globSync(trimmedQuery, globOptions);
+                const currentFileCount = collectedFiles.size;
+                const updatedFiles = new Set([...collectedFiles, ...foundFiles]); // Add new files to the set
+                const newFilesAdded = updatedFiles.size - currentFileCount;
+                setCollectedFiles(updatedFiles);
+
+                let message = `Found ${foundFiles.length} matches for "${trimmedQuery}". Added ${newFilesAdded} new file(s). Total: ${updatedFiles.size}.`;
+                if (ignorePatterns.length > 0) message += ' (.gitignore respected)';
+                message += ' Enter next glob or leave empty and press Enter to finish.';
                 setSafeStatusMessage(message);
             } catch (error) { // Handle glob error
-                setSafeStatusMessage(`Error glob "${trimmedQuery}": ${error.message}. Try again or ESC.`); console.error(`\nError glob "${trimmedQuery}":`, error);
+                setSafeStatusMessage(`Error processing glob "${trimmedQuery}": ${error.message}. Please try again.`);
+                console.error(`\nError processing glob "${trimmedQuery}":`, error);
             }
-            setGlobQuery('');
-        } else { // Empty query, no files
-            setSafeStatusMessage('Enter glob pattern first, or ESC for menu.');
+            setGlobQuery(''); // Clear input field after submission
+        } else { // Empty query, no files collected yet
+            setSafeStatusMessage('No files collected yet. Please enter a glob pattern to find files.');
         }
     };
 
     const handlePasteSave = (contentToSave) => {
-        if (isHandlingRawInput.current || saveTimerRef.current || countdownIntervalRef.current) {
-             console.warn("Save called while potentially active? Forcing cleanup.");
-             clearSaveTimer(); restoreInput();
-        }
         const trimmedContent = String(contentToSave ?? '').trim();
-        if (!trimmedContent) { setMode('menu'); setSafeStatusMessage('No content pasted.'); return; }
-        try { fs.writeFileSync('paste.txt', contentToSave); setMode('menu'); setSafeStatusMessage('Saved to paste.txt'); }
-        catch (error) { setMode('menu'); setSafeStatusMessage(`Error saving: ${error.message}.`); console.error("\nError saving:", error); }
+        if (!trimmedContent) {
+             setMode('menu');
+             setSafeStatusMessage('Paste cancelled: No content provided.');
+             return;
+        }
+
+        setMode('processing'); // Show processing state briefly
+        setSafeStatusMessage('Saving pasted content to paste.txt...');
+
+        // Use async writeFile for better responsiveness
+        fs.writeFile('paste.txt', contentToSave, (err) => {
+            if (err) {
+                 console.error("\nError saving paste.txt:", err);
+                 setMode('error'); // Show error state
+                 setSafeStatusMessage(`Error saving paste.txt: ${err.message}`);
+                 setTimeout(() => { setMode('menu'); setSafeStatusMessage(''); }, 3000); // Return to menu after showing error
+            } else {
+                 setMode('done'); // Show success state briefly
+                 setSafeStatusMessage('Content saved successfully to paste.txt!');
+                 setTimeout(() => { setMode('menu'); setSafeStatusMessage('Saved to paste.txt'); }, 1500); // Return to menu, keep confirmation
+            }
+        });
      };
 
 
     // --- Render Logic ---
 
-    // Render Log (Optional: remove or comment out for production)
-    // console.log(`RENDERING - Mode: ${mode}, Countdown State: ${countdown}, Status: "${statusMessage}", ApplyStatus: "${applyInputStatus}"`);
-
     // Render Menu
     if (mode === 'menu') {
-        const items = [ { label: 'Pack files', value: 'pack' }, { label: 'Apply edits', value: 'apply' }, { label: 'Exit', value: 'exit' }, ];
+        const items = [
+            { label: 'Pack files into pack.xml', value: 'pack' },
+            { label: 'Apply edits from paste', value: 'apply' },
+            { label: 'Exit', value: 'exit' },
+        ];
         return (
-            <>
-                {statusMessage && (
-                    <Box paddingLeft={1} paddingRight={1} marginBottom={1}>
+            <Box flexDirection="column" padding={1} minWidth={60}>
+                 {statusMessage && ( // Display status message above menu if present
+                    <Box paddingX={1} marginBottom={1} borderStyle="round" borderColor="yellow">
                         <Text color="yellow" wrap="wrap">{statusMessage}</Text>
                     </Box>
                 )}
-                <Box flexDirection="column" padding={1}>
-                    <Text>Select action:</Text>
-                    <SelectInput items={items} onSelect={handleMenuSelect} />
+                <Box flexDirection="column" padding={1} borderStyle="single">
+                    <Text bold>Select Action:</Text>
+                    <Box marginTop={1}>
+                        <SelectInput items={items} onSelect={handleMenuSelect} />
+                    </Box>
                 </Box>
-            </>
+            </Box>
         );
     }
 
-    // Render Glob Input
+    // Render Glob Input (Pack Files)
     if (mode === 'globInput') {
-         const displayFiles = Array.from(collectedFiles);
+         const displayFiles = Array.from(collectedFiles).sort();
          const maxFilesToShow = 10;
          const truncated = displayFiles.length > maxFilesToShow;
-         const filesString = displayFiles.sort().slice(0, maxFilesToShow).join(', ') + (truncated ? `... (${collectedFiles.size - maxFilesToShow} more)` : '');
+         const filesString = displayFiles.slice(0, maxFilesToShow).join('\n  ') + (truncated ? `\n  ... (${collectedFiles.size - maxFilesToShow} more)` : '');
+
          const fileListContent = collectedFiles.size > 0
-            ? <Text color="gray">{filesString}</Text>
-            : <Text color="gray">(None)</Text>;
+            ? <Text dimColor>{`  ${filesString}`}</Text>
+            : <Text dimColor>(No files collected yet)</Text>;
 
         return (
-            <Box flexDirection="column" padding={1}>
-                <Text wrap="wrap">{statusMessage}</Text>
-                <Box marginTop={1} flexWrap="wrap">
-                    <Text>Files ({collectedFiles.size}): </Text>
-                    {fileListContent}
+            <Box flexDirection="column" padding={1} borderStyle="round" borderColor="blue" minWidth={60}>
+                {/* Title */}
+                <Box paddingX={1} marginBottom={1}>
+                    <Text color="blue" bold>--- Pack Files: Glob Input ---</Text>
                 </Box>
-                 <Box borderStyle="round" paddingX={1} marginTop={1}>
-                    <Text>Glob:</Text>
+
+                {/* Status Message */}
+                {statusMessage && (
+                    <Box paddingX={1} marginBottom={1}>
+                        <Text wrap="wrap" color="yellow">{statusMessage}</Text>
+                    </Box>
+                )}
+
+                {/* Collected Files Display */}
+                <Box flexDirection="column" marginBottom={1} paddingX={1}>
+                    <Text>Collected Files ({collectedFiles.size}):</Text>
+                    <Box marginLeft={1}>{fileListContent}</Box>
+                </Box>
+
+                {/* Input Area */}
+                 <Box borderStyle="round" paddingX={1} marginX={1} marginBottom={1}>
+                    <Text>Glob Pattern:</Text>
                     <InkTextInput
                         value={globQuery}
                         onChange={setGlobQuery}
                         onSubmit={handleGlobSubmit}
-                        placeholder="(e.g., src/**/*.js)"
-                        focus={true}
+                        placeholder="(e.g., src/**/*.js, *.md)"
+                        // Ensure focus is managed correctly if needed, but default Ink behavior is often sufficient
+                        // focus={true} // Usually automatically focused
                     />
                  </Box>
-                 <Text color="dim">Enter to add. Empty Enter=generate. ESC=menu.</Text>
+
+                 {/* Help Text */}
+                 <Box paddingX={1}>
+                     <Text color="dim">Press Enter to add files. Leave empty and press Enter to generate pack.xml. Press ESC to return to menu.</Text>
+                 </Box>
              </Box>
         );
     }
 
     // Render Apply Input (Paste Mode)
     if (mode === 'applyInput') {
-        const previewText = `...${String(pasteInputRef.current ?? '').slice(-300)}`;
+        // Show only the last N characters for preview, avoid showing huge pastes
+        const previewLength = 300;
+        const currentPasteContent = pasteInputRef.current ?? '';
+        const previewText = currentPasteContent.length > previewLength
+            ? `...${currentPasteContent.slice(-previewLength)}`
+            : currentPasteContent;
+
         return (
-            <Box padding={1} flexDirection="column" borderStyle="round" borderColor="cyan" minHeight={6}>
-                <Text color="cyan" bold>--- Apply Edits: Paste Mode ---</Text>
-                {/* General Status */}
-                <Text wrap="wrap">{applyInputStatus}</Text>
+            <Box flexDirection="column" padding={1} borderStyle="round" borderColor="cyan" minWidth={60}>
+                 {/* Title */}
+                <Box paddingX={1} marginBottom={1}>
+                    <Text color="cyan" bold>--- Apply Edits: Paste Mode ---</Text>
+                </Box>
+
+                {/* Status (dynamic updates) */}
+                {applyInputStatus && (
+                    <Box paddingX={1} marginBottom={1}>
+                        <Text wrap="wrap">{applyInputStatus}</Text>
+                    </Box>
+                )}
+
                 {/* Countdown Display (only when countdown is active) */}
-                {countdown !== null && ( // <-- Condition hides/shows the box
-                    <Box marginTop={1} borderColor="yellow" borderStyle="single" paddingX={1}>
+                {countdown !== null && (
+                    <Box marginTop={1} marginBottom={1} marginX={1} borderColor="yellow" borderStyle="single" paddingX={1} alignSelf="flex-start">
                         <Text color="yellow"> Finalizing... Saving in {countdown} </Text>
                     </Box>
                 )}
-                {/* Preview */}
-                <Box marginTop={1} flexGrow={1}>
-                     <Text dimColor>{previewText}</Text>
+
+                {/* Paste Preview Area */}
+                {/* CHANGE HERE: Use "single" instead of "dotted" */}
+                <Box marginX={1} marginBottom={1} padding={1} borderStyle="single" borderColor="gray" minHeight={5}>
+                     <Text dimColor wrap="end">{previewText || '(Paste content here...)'}</Text>
                 </Box>
-                <Text color="dim">Press Enter when finished. Save triggers after 3s pause. ESC cancels.</Text>
+
+                {/* Help Text */}
+                <Box paddingX={1}>
+                    <Text color="dim">Paste content now. Press Enter when finished. Save triggers after 1.5s pause. Any key cancels save. ESC returns to menu.</Text>
+                </Box>
             </Box>
         );
      }
 
      // Render Processing/Done/Error states
      if (mode === 'processing' || mode === 'done' || mode === 'error') {
+          // Use a consistent box for these final messages
+          const borderColor = mode === 'error' ? 'red' : (mode === 'done' ? 'green' : 'yellow');
           return (
-               <Box padding={1}>
-                    <Text color={mode === 'error' ? 'red' : (mode === 'done' ? 'green' : 'yellow')}>
+               <Box padding={1} borderStyle="round" borderColor={borderColor} minWidth={60}>
+                    <Text color={borderColor} wrap="wrap">
                          {statusMessage}
                     </Text>
                </Box>
           )
      }
 
-    // Fallback render
-    // console.log(`RENDERING - Fallback for invalid mode: ${mode}`); // Optional Log
+    // Fallback render for unexpected modes
     return (<Box padding={1}><Text color="red">Error: Invalid application mode '{mode}'</Text></Box>);
 };
 
 // --- Render the Ink application ---
 try {
+    // Ensure terminal is large enough or provide guidance? (Optional)
     render(<App />);
 } catch (renderError) {
     console.error("Fatal Error rendering Ink application.", renderError);
