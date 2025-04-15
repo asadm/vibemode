@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline'; // Needed for emitKeypressEvents
 import clipboardy from 'clipboardy'; // <-- Import clipboardy
-import { applyEdit, getModifiedFiles } from './editor.js';
+import { applyEdit, getModifiedFiles } from './editor.js'; // Ensure applyEdit is imported
 
 // Helper function to escape XML special characters
 const escapeXml = (unsafe) => {
@@ -23,12 +23,13 @@ const escapeXml = (unsafe) => {
 
 const App = () => {
     // --- State ---
-    const [mode, setMode] = useState('menu');
+    const [mode, setMode] = useState('menu'); // 'menu', 'globInput', 'applyInput', 'processing', 'applyingEdits', 'done', 'error'
     const [globQuery, setGlobQuery] = useState('');
     const [collectedFiles, setCollectedFiles] = useState(new Set());
     const [statusMessage, setStatusMessage] = useState('');
     const [applyInputStatus, setApplyInputStatus] = useState('');
     const [countdown, setCountdown] = useState(null); // State for countdown display (3, 2, 1, null)
+    const [fileEditStatus, setFileEditStatus] = useState({}); // State for tracking individual file edits: { [filePath: string]: 'pending' | 'done' | 'error' }
 
     // --- Hooks ---
     const { exit } = useApp();
@@ -74,6 +75,7 @@ const App = () => {
             setGlobQuery('');
             setStatusMessage(mode === 'globInput' ? 'Glob input cancelled.' : 'Paste operation cancelled.');
             setApplyInputStatus(''); // Clear apply status too
+            setFileEditStatus({}); // Clear file edit status on escape
         }
     }, {
         // Apply this hook only when in globInput or applyInput mode
@@ -158,7 +160,7 @@ const App = () => {
 
                     const contentToSave = pasteInputRef.current;
                     restoreInput(); // Clean up raw mode etc. *before* potentially slow save
-                    handlePasteSave(contentToSave);
+                    handlePasteSave(contentToSave); // <<-- Call the modified handler
                }, 1500); // Shortened countdown timer (3 * 500ms)
 
            } else { // Handle other non-Enter keys
@@ -197,6 +199,7 @@ const App = () => {
              pasteInputRef.current = ''; // Clear previous paste content
              setSafeApplyInputStatus('Ready. Paste content now. Press Enter when finished.');
              setSafeStatusMessage(''); // Clear general status
+             setFileEditStatus({}); // Clear file edit status on entering apply mode
              originalRawMode.current = stdin.isRaw;
 
              try {
@@ -229,6 +232,7 @@ const App = () => {
         clearSaveTimer(); // Clear timer if user selects menu item during countdown
         setSafeStatusMessage('');
         setSafeApplyInputStatus('');
+        setFileEditStatus({}); // Clear file edit status when returning to menu
         if (item.value === 'pack') {
              setMode('globInput');
             let msg = 'Enter glob pattern(s). .gitignore rules are applied.';
@@ -323,31 +327,103 @@ const App = () => {
     };
 
 
+    // --- MODIFIED: handlePasteSave ---
     const handlePasteSave = async (contentToSave) => {
         const trimmedContent = String(contentToSave ?? '').trim();
         if (!trimmedContent) {
              setMode('menu');
              setSafeStatusMessage('Paste cancelled: No content provided.');
+             setFileEditStatus({}); // Clear status
              return;
         }
 
-        setMode('processing'); // Show processing state briefly
-        setSafeStatusMessage('Saving pasted content to paste.txt...');
+        setMode('processing'); // Show brief processing state
+        setSafeStatusMessage('Parsing pasted content to identify files...');
 
-        
-        const {filePaths} = await getModifiedFiles(trimmedContent);
-        fs.writeFile('paste.txt', JSON.stringify(filePaths), (err) => {
-            if (err) {
-                 console.error("\nError saving paste.txt:", err);
-                 setMode('error'); // Show error state
-                 setSafeStatusMessage(`Error saving paste.txt: ${err.message}`);
-                 setTimeout(() => { setMode('menu'); setSafeStatusMessage(''); }, 3000); // Return to menu after showing error
-            } else {
-                 setMode('done'); // Show success state briefly
-                 setSafeStatusMessage('Content saved successfully to paste.txt!');
-                 setTimeout(() => { setMode('menu'); setSafeStatusMessage('Saved to paste.txt'); }, 1500); // Return to menu, keep confirmation
+        try {
+            // 1. Get file paths from the pasted content
+            const { filePaths } = await getModifiedFiles(trimmedContent);
+
+            if (!filePaths || filePaths.length === 0) {
+                setMode('menu');
+                setSafeStatusMessage('No files identified for modification in the pasted content.');
+                setFileEditStatus({}); // Clear status
+                return;
             }
-        });
+
+            // 2. Initialize status for all identified files to 'pending'
+            const initialStatus = filePaths.reduce((acc, fp) => {
+                acc[fp] = 'pending';
+                return acc;
+            }, {});
+            setFileEditStatus(initialStatus);
+
+            // 3. Switch to the 'applyingEdits' mode to show the progress UI
+            setMode('applyingEdits');
+            setSafeStatusMessage(`Applying edits to ${filePaths.length} file(s)...`);
+
+            // 4. Process each file asynchronously
+            const editPromises = filePaths.map(async (filePath) => {
+                try {
+                    const result = await applyEdit(trimmedContent, filePath); // Apply the edit
+                    // Update state for *this* file to 'done' on success
+                    // Use functional update to avoid race conditions with rapid updates
+                    setFileEditStatus(prevStatus => ({ ...prevStatus, [filePath]: 'done' }));
+                    return { filePath, success: true, result: result || '(No output)' }; // Collect result
+                } catch (error) {
+                    console.error(`\nError applying edit to ${filePath}:`, error);
+                    // Update state for *this* file to 'error' on failure
+                    setFileEditStatus(prevStatus => ({ ...prevStatus, [filePath]: 'error' }));
+                    return { filePath, success: false, error: error.message || String(error) }; // Collect error
+                }
+            });
+
+            // 5. Wait for all edit attempts to complete
+            const results = await Promise.all(editPromises);
+
+            // 6. Aggregate results (success and errors)
+            const successfulEdits = results.filter(r => r.success);
+            const failedEdits = results.filter(r => !r.success);
+            const aggregatedResults = results.map(r =>
+                r.success
+                    ? `--- Success: ${r.filePath} ---\n${r.result}\n--- End: ${r.filePath} ---`
+                    : `--- Error: ${r.filePath} ---\n${r.error}\n--- End: ${r.filePath} ---`
+            ).join('\n\n');
+
+            // 7. Save aggregated results to paste.txt
+            fs.writeFile('paste.txt', aggregatedResults, (writeError) => {
+                let finalMessage;
+                if (writeError) {
+                     console.error("\nError saving aggregated results to paste.txt:", writeError);
+                     finalMessage = `Edits applied (${successfulEdits.length} success, ${failedEdits.length} failed), but failed to save results to paste.txt: ${writeError.message}`;
+                     setMode('error'); // Keep error state briefly
+                } else {
+                     finalMessage = `Applied edits to ${successfulEdits.length} file(s). Results saved to paste.txt.`;
+                     if (failedEdits.length > 0) {
+                         finalMessage += ` Failed edits for ${failedEdits.length} file(s) (see paste.txt and console).`;
+                         setMode('error'); // Show error state if any file failed
+                     } else {
+                         setMode('done'); // Show success state
+                     }
+                }
+                setSafeStatusMessage(finalMessage); // Update status with summary
+
+                // 8. Return to menu after a delay
+                setTimeout(() => {
+                    setMode('menu');
+                    // Status message is already set, keep it for context on menu screen
+                    setFileEditStatus({}); // Clear the file status for the next run
+                }, failedEdits.length > 0 || writeError ? 4000 : 2500); // Longer delay if there were errors
+            });
+
+        } catch (error) {
+             // Handle errors during getModifiedFiles or initial setup
+             console.error("\nError processing pasted content for edits:", error);
+             setMode('error'); // Show error state
+             setSafeStatusMessage(`Error preparing edits: ${error.message}. Operation cancelled.`);
+             setFileEditStatus({}); // Clear status
+             setTimeout(() => { setMode('menu'); setSafeStatusMessage(''); }, 3000); // Return to menu after error display
+        }
      };
 
 
@@ -416,7 +492,6 @@ const App = () => {
                         onChange={setGlobQuery}
                         onSubmit={handleGlobSubmit}
                         placeholder="(e.g., src/**/*.js, *.md)"
-                        // Ensure focus is managed correctly if needed, but default Ink behavior is often sufficient
                         // focus={true} // Usually automatically focused
                     />
                  </Box>
@@ -461,7 +536,6 @@ const App = () => {
                 )}
 
                 {/* Paste Preview Area */}
-                {/* CHANGE HERE: Use "single" instead of "dotted" */}
                 <Box marginX={1} marginBottom={1} padding={1} borderStyle="single" borderColor="gray" minHeight={5}>
                      <Text dimColor wrap="end">{previewText || '(Paste content here...)'}</Text>
                 </Box>
@@ -474,18 +548,56 @@ const App = () => {
         );
      }
 
-     // Render Processing/Done/Error states (Now less used for 'pack', mainly for 'apply')
+    // --- NEW: Render Applying Edits Progress ---
+    if (mode === 'applyingEdits') {
+        const statusIndicators = {
+            pending: '⏳', // Loading emoji
+            done: '✅',   // Checkmark
+            error: '❌',   // Cross mark
+        };
+        // Get file paths in a consistent order for display
+        const sortedFilePaths = Object.keys(fileEditStatus).sort();
+
+        return (
+            <Box flexDirection="column" padding={1} borderStyle="round" borderColor="magenta" minWidth={60}>
+                {/* Status Message */}
+                {statusMessage && (
+                    <Box paddingX={1} marginBottom={1}>
+                        <Text wrap="wrap" color="magenta">{statusMessage}</Text>
+                    </Box>
+                )}
+
+                {/* File List */}
+                <Box flexDirection="column" paddingX={1}>
+                    <Text bold>Applying Edits:</Text>
+                    {sortedFilePaths.length === 0 && <Text dimColor> (Identifying files...)</Text>}
+                    {sortedFilePaths.map((filePath) => {
+                        const status = fileEditStatus[filePath];
+                        const indicator = statusIndicators[status] || '?';
+                        return (
+                            <Box key={filePath} marginLeft={1}>
+                                <Text>
+                                    {indicator}{' '}
+                                    <Text color={status === 'error' ? 'red' : undefined}>{filePath}</Text>
+                                </Text>
+                            </Box>
+                        );
+                    })}
+                </Box>
+            </Box>
+        );
+    }
+
+
+     // Render Processing/Done/Error states (Used by both Pack and Apply)
      if (mode === 'processing' || mode === 'done' || mode === 'error') {
           const borderColor = mode === 'error' ? 'red' : (mode === 'done' ? 'green' : 'yellow');
-          // Special case for brief 'processing' message before clipboard copy attempt
-          const message = mode === 'processing' && statusMessage.includes('copy')
-              ? statusMessage // Show the "Generating XML and preparing to copy..." message
-              : statusMessage; // Otherwise show the regular status (mainly for apply mode now)
+          const message = statusMessage; // Just use the current status message
 
           return (
                <Box padding={1} borderStyle="round" borderColor={borderColor} minWidth={60}>
                     <Text color={borderColor} wrap="wrap">
-                         {message}
+                         {message || (mode === 'processing' ? 'Processing...' : (mode === 'done' ? 'Done.' : 'Error.'))}
                     </Text>
                </Box>
           )
