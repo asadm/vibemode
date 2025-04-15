@@ -16,6 +16,7 @@
 		"dist"
 	],
 	"dependencies": {
+		"clipboardy": "^4.0.0",
 		"glob": "^11.0.1",
 		"ink": "^5.2.0",
 		"ink-select-input": "^6.0.0",

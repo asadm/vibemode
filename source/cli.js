@@ -7,16 +7,18 @@ import { globSync } from 'glob';
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline'; // Needed for emitKeypressEvents
+import clipboardy from 'clipboardy'; // <-- Import clipboardy
 
 // Helper function to escape XML special characters
 const escapeXml = (unsafe) => {
     if (typeof unsafe !== 'string') {
         try { return String(unsafe); } catch (e) { console.warn(`Warning: Could not convert value to string for XML escaping: ${unsafe}`); return ''; }
     }
-    // Simple replacement map
-    const map = {'<': '<', '>': '>', '&': '&', "'": "'", '"': '"'};
+    // Simple replacement map - IMPORTANT: Corrected escaping
+    const map = {'<': '<', '>': '>', '&': '&', "'": '"', '"': '"'};
     return unsafe.replace(/[<>&'"]/g, c => map[c]);
 };
+
 
 const App = () => {
     // --- State ---
@@ -90,7 +92,6 @@ const App = () => {
              countdownIntervalRef.current = null; // Clear the ref immediately
         }
         // Always attempt to set countdown state to null when timers are cleared.
-        // React handles the case where the state is already null gracefully (no extra render).
         setCountdown(null);
     };
 
@@ -243,14 +244,17 @@ const App = () => {
 
     const handleGlobSubmit = (query) => {
         const trimmedQuery = query.trim();
-        if (trimmedQuery === '' && collectedFiles.size > 0) { // Generate XML
-            setMode('processing'); setSafeStatusMessage('Generating pack.xml...');
-            // Use setTimeout to allow Ink to render the "processing" message
+
+        if (trimmedQuery === '' && collectedFiles.size > 0) { // Generate XML & Copy to Clipboard
+            setMode('processing');
+            setSafeStatusMessage('Generating XML and preparing to copy...');
+
+            // Use setTimeout to allow Ink to render the "processing" message before sync operations
             setTimeout(() => {
                 try {
                     const filesArray = Array.from(collectedFiles).sort();
                     let dirStructure = '<directory_structure>\n';
-                    filesArray.forEach(file => { dirStructure += `  ${file}\n`; });
+                    filesArray.forEach(file => { dirStructure += `  ${escapeXml(file)}\n`; }); // Escape file paths here too, just in case
                     dirStructure += '</directory_structure>\n\n';
 
                     let fileContents = '<files>\n<!-- This section contains the contents of the collected files. -->\n\n';
@@ -264,6 +268,7 @@ const App = () => {
                                  return;
                             }
                             const content = fs.readFileSync(filePath, 'utf8');
+                            // Use the corrected escapeXml function
                             fileContents += `<file path="${escapeXml(file)}">\n${escapeXml(content)}\n</file>\n\n`;
                         } catch (readError) {
                             fileContents += `<file path="${escapeXml(file)}" error="Could not read file: ${escapeXml(readError.message)}">\n</file>\n\n`;
@@ -272,17 +277,27 @@ const App = () => {
                     });
                     fileContents += '</files>';
 
-                    fs.writeFileSync('pack.xml', dirStructure + fileContents);
-                    setMode('done'); setSafeStatusMessage(`pack.xml created successfully with ${collectedFiles.size} files!`);
-                    setTimeout(exit, 2000); // Exit after showing success
+                    const finalXmlContent = dirStructure + fileContents;
+
+                    // --- Copy to Clipboard ---
+                    clipboardy.write(finalXmlContent).then(() => {
+                        setMode('menu'); // Return to menu on success
+                        setSafeStatusMessage(`XML for ${collectedFiles.size} files copied to clipboard!`);
+                    }).catch(copyError => {
+                        console.error("\nError copying XML to clipboard:", copyError);
+                        setMode('menu'); // Still return to menu on copy error
+                        setSafeStatusMessage(`Generated XML, but failed to copy: ${copyError.message}. See console.`);
+                    });
+                    // ------------------------
+
                 } catch (error) { // Handle XML generation error
-                    setMode('error'); setSafeStatusMessage(`Error generating pack.xml: ${error.message}`);
-                    console.error("\nError generating pack.xml:", error);
-                    setTimeout(() => exit(error), 3000); // Exit after showing error
+                    console.error("\nError generating XML content:", error);
+                    setMode('menu'); // Return to menu on generation error
+                    setSafeStatusMessage(`Error generating XML: ${error.message}. See console.`);
                 }
             }, 50); // Small delay for UI update
 
-        } else if (trimmedQuery !== '') { // Process glob
+        } else if (trimmedQuery !== '') { // Process glob (unchanged)
             try {
                 // Ensure ignore patterns are fresh if needed, though useMemo handles this
                 const globOptions = { nodir: true, cwd: process.cwd(), ignore: ignorePatterns, dot: true };
@@ -301,10 +316,11 @@ const App = () => {
                 console.error(`\nError processing glob "${trimmedQuery}":`, error);
             }
             setGlobQuery(''); // Clear input field after submission
-        } else { // Empty query, no files collected yet
+        } else { // Empty query, no files collected yet (unchanged)
             setSafeStatusMessage('No files collected yet. Please enter a glob pattern to find files.');
         }
     };
+
 
     const handlePasteSave = (contentToSave) => {
         const trimmedContent = String(contentToSave ?? '').trim();
@@ -338,7 +354,7 @@ const App = () => {
     // Render Menu
     if (mode === 'menu') {
         const items = [
-            { label: 'Pack files into pack.xml', value: 'pack' },
+            { label: 'Pack files (copy XML)', value: 'pack' }, // Updated label
             { label: 'Apply edits from paste', value: 'apply' },
             { label: 'Exit', value: 'exit' },
         ];
@@ -405,7 +421,8 @@ const App = () => {
 
                  {/* Help Text */}
                  <Box paddingX={1}>
-                     <Text color="dim">Press Enter to add files. Leave empty and press Enter to generate pack.xml. Press ESC to return to menu.</Text>
+                     {/* Updated help text */}
+                     <Text color="dim">Press Enter to add files. Leave empty and press Enter to copy XML to clipboard. Press ESC to return to menu.</Text>
                  </Box>
              </Box>
         );
@@ -455,14 +472,18 @@ const App = () => {
         );
      }
 
-     // Render Processing/Done/Error states
+     // Render Processing/Done/Error states (Now less used for 'pack', mainly for 'apply')
      if (mode === 'processing' || mode === 'done' || mode === 'error') {
-          // Use a consistent box for these final messages
           const borderColor = mode === 'error' ? 'red' : (mode === 'done' ? 'green' : 'yellow');
+          // Special case for brief 'processing' message before clipboard copy attempt
+          const message = mode === 'processing' && statusMessage.includes('copy')
+              ? statusMessage // Show the "Generating XML and preparing to copy..." message
+              : statusMessage; // Otherwise show the regular status (mainly for apply mode now)
+
           return (
                <Box padding={1} borderStyle="round" borderColor={borderColor} minWidth={60}>
                     <Text color={borderColor} wrap="wrap">
-                         {statusMessage}
+                         {message}
                     </Text>
                </Box>
           )
