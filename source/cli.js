@@ -8,13 +8,14 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline'; // Needed for emitKeypressEvents
 import clipboardy from 'clipboardy'; // <-- Import clipboardy
-import { applyEdit, getModifiedFiles } from './editor.js'; // Ensure applyEdit is imported
+import { applyEdit, applyEditInFull, getModifiedFiles } from './editor.js'; // Ensure applyEdit is imported
 import { writeDiff } from './writeDiff.js';
+import logger from './logger.js';
 
 // Helper function to escape XML special characters
 const escapeXml = (unsafe) => {
     if (typeof unsafe !== 'string') {
-        try { return String(unsafe); } catch (e) { console.warn(`Warning: Could not convert value to string for XML escaping: ${unsafe}`); return ''; }
+        try { return String(unsafe); } catch (e) { logger.warn(`Warning: Could not convert value to string for XML escaping: ${unsafe}`); return ''; }
     }
     // Simple replacement map - IMPORTANT: Corrected escaping
     const map = {'<': '<', '>': '>', '&': '&', "'": '"', '"': '"'};
@@ -57,7 +58,7 @@ const App = () => {
                 .flatMap(l => (!l.includes('*') && !l.includes('/') && !l.startsWith('!')) ? [l, `${l}/**`] : [l]);
         } catch (error) {
             if (error.code !== 'ENOENT') {
-                console.error("Warning: Could not read/parse .gitignore:", error.message);
+                logger.error("Warning: Could not read/parse .gitignore:", error.message);
             }
             return [];
         }
@@ -112,7 +113,7 @@ const App = () => {
              if (stdin) {
                  stdin.removeListener('keypress', handleKeyPress);
                  if (typeof originalRawMode.current === 'boolean' && typeof setRawMode === 'function') {
-                     try { setRawMode(originalRawMode.current); } catch (error) { console.error("Cleanup Error setting raw mode:", error); }
+                     try { setRawMode(originalRawMode.current); } catch (error) { logger.error("Cleanup Error setting raw mode:", error); }
                  }
              }
              isHandlingRawInput.current = false;
@@ -208,7 +209,7 @@ const App = () => {
                  readline.emitKeypressEvents(stdin); // Ensure keypress events are emitted
                  stdin.on('keypress', handleKeyPress); // Attach listener
              } catch (error) {
-                 console.error("Setup Error setting raw mode:", error);
+                 logger.error("Setup Error setting raw mode:", error);
                  restoreInput(); // Attempt cleanup
                  setMode('menu');
                  setSafeStatusMessage("Error: Failed to set raw mode.");
@@ -269,7 +270,7 @@ const App = () => {
                         try {
                              const stat = fs.statSync(filePath);
                              if (!stat.isFile()) {
-                                 console.warn(`\nWarn: Skipping non-file entry during XML generation: ${file}`);
+                                 logger.warn(`\nWarn: Skipping non-file entry during XML generation: ${file}`);
                                  fileContents += `<!-- Skipped non-file entry: ${escapeXml(file)} -->\n\n`;
                                  return;
                             }
@@ -278,7 +279,7 @@ const App = () => {
                             fileContents += `<file path="${escapeXml(file)}">\n${escapeXml(content)}\n</file>\n\n`;
                         } catch (readError) {
                             fileContents += `<file path="${escapeXml(file)}" error="Could not read file: ${escapeXml(readError.message)}">\n</file>\n\n`;
-                            console.error(`\nWarn: Could not read ${file}: ${readError.message}`);
+                            logger.error(`\nWarn: Could not read ${file}: ${readError.message}`);
                         }
                     });
                     fileContents += '</files>';
@@ -290,16 +291,16 @@ const App = () => {
                         setMode('menu'); // Return to menu on success
                         setSafeStatusMessage(`XML for ${collectedFiles.size} files copied to clipboard!`);
                     }).catch(copyError => {
-                        console.error("\nError copying XML to clipboard:", copyError);
+                        logger.error("\nError copying XML to clipboard:", copyError);
                         setMode('menu'); // Still return to menu on copy error
-                        setSafeStatusMessage(`Generated XML, but failed to copy: ${copyError.message}. See console.`);
+                        setSafeStatusMessage(`Generated XML, but failed to copy: ${copyError.message}. See logger.`);
                     });
                     // ------------------------
 
                 } catch (error) { // Handle XML generation error
-                    console.error("\nError generating XML content:", error);
+                    logger.error("\nError generating XML content:", error);
                     setMode('menu'); // Return to menu on generation error
-                    setSafeStatusMessage(`Error generating XML: ${error.message}. See console.`);
+                    setSafeStatusMessage(`Error generating XML: ${error.message}. See logger.`);
                 }
             }, 50); // Small delay for UI update
 
@@ -319,7 +320,7 @@ const App = () => {
                 setSafeStatusMessage(message);
             } catch (error) { // Handle glob error
                 setSafeStatusMessage(`Error processing glob "${trimmedQuery}": ${error.message}. Please try again.`);
-                console.error(`\nError processing glob "${trimmedQuery}":`, error);
+                logger.error(`\nError processing glob "${trimmedQuery}":`, error);
             }
             setGlobQuery(''); // Clear input field after submission
         } else { // Empty query, no files collected yet (unchanged)
@@ -366,15 +367,23 @@ const App = () => {
             // 4. Process each file asynchronously
             const editPromises = filePaths.map(async (filePath) => {
                 try {
-                    const result = await applyEdit(trimmedContent, filePath); // Apply the edit
+                    const fileContent = fs.readFileSync(filePath, 'utf8');
+                    
+                    const result = await applyEdit(trimmedContent, filePath, fileContent); // Apply the edit
+                    logger.info("edits for file: ", filePath,result);
                     const errors = await writeDiff(filePath, result);
                     if (errors) {
+                        logger.warn("errors for file: ", filePath,errors);
+                        
                         // We retry one more time along with error as reported by writeDiff
-                        const retryResult = await applyEdit(trimmedContent, filePath, result, errors);
-                        const retryErrors = await writeDiff(filePath, retryResult);
-                        if (retryErrors) {
-                            console.error(`\nError applying edit to ${filePath}:`, retryErrors);
-                            throw new Error(retryErrors);
+                        // const retryResult = await applyEdit(trimmedContent, filePath, fileContent, result, errors);
+                        // const retryErrors = await writeDiff(filePath, retryResult);
+                        const {fileContent: modifiedFileContent} = await applyEditInFull(trimmedContent, filePath, fileContent);
+                        if (modifiedFileContent) {
+                            fs.writeFileSync(filePath, modifiedFileContent);
+                        }
+                        else{
+                            throw new Error('Error applying edit in full', modifiedFileContent);
                         }
                     }
                     // Update state for *this* file to 'done' on success
@@ -382,7 +391,7 @@ const App = () => {
                     setFileEditStatus(prevStatus => ({ ...prevStatus, [filePath]: 'done' }));
                     return { filePath, success: true, result: result || '(No output)' }; // Collect result
                 } catch (error) {
-                    console.error(`\nError applying edit to ${filePath}:`, error);
+                    logger.error(`\nError applying edit to ${filePath}:`, error);
                     // Update state for *this* file to 'error' on failure
                     setFileEditStatus(prevStatus => ({ ...prevStatus, [filePath]: 'error' }));
                     return { filePath, success: false, error: error.message || String(error) }; // Collect error
@@ -395,41 +404,36 @@ const App = () => {
             // 6. Aggregate results (success and errors)
             const successfulEdits = results.filter(r => r.success);
             const failedEdits = results.filter(r => !r.success);
-            const aggregatedResults = results.map(r =>
-                r.success
-                    ? `--- Success: ${r.filePath} ---\n${r.result}\n--- End: ${r.filePath} ---`
-                    : `--- Error: ${r.filePath} ---\n${r.error}\n--- End: ${r.filePath} ---`
-            ).join('\n\n');
+            // const aggregatedResults = results.map(r =>
+            //     r.success
+            //         ? `--- Success: ${r.filePath} ---\n${r.result}\n--- End: ${r.filePath} ---`
+            //         : `--- Error: ${r.filePath} ---\n${r.error}\n--- End: ${r.filePath} ---`
+            // ).join('\n\n');
 
             // 7. Save aggregated results to paste.txt
-            fs.writeFile('paste.txt', aggregatedResults, (writeError) => {
-                let finalMessage;
-                if (writeError) {
-                     console.error("\nError saving aggregated results to paste.txt:", writeError);
-                     finalMessage = `Edits applied (${successfulEdits.length} success, ${failedEdits.length} failed), but failed to save results to paste.txt: ${writeError.message}`;
-                     setMode('error'); // Keep error state briefly
-                } else {
-                     finalMessage = `Applied edits to ${successfulEdits.length} file(s). Results saved to paste.txt.`;
-                     if (failedEdits.length > 0) {
-                         finalMessage += ` Failed edits for ${failedEdits.length} file(s) (see paste.txt and console).`;
-                         setMode('error'); // Show error state if any file failed
-                     } else {
-                         setMode('done'); // Show success state
-                     }
-                }
-                setSafeStatusMessage(finalMessage); // Update status with summary
+            // fs.writeFile('paste.txt', aggregatedResults, (writeError) => {
+            let finalMessage;
+            finalMessage = `Applied edits to ${successfulEdits.length} file(s). Results saved to paste.txt.`;
+            if (failedEdits.length > 0) {
+                finalMessage += ` Failed edits for ${failedEdits.length} file(s) (see paste.txt and console).`;
+                setMode('error'); // Show error state if any file failed
+            } else {
+                setMode('done'); // Show success state
+            }
+    
+            setSafeStatusMessage(finalMessage); // Update status with summary
 
-                // 8. Return to menu after a delay
-                setTimeout(() => {
-                    setMode('menu');
-                    // Status message is already set, keep it for context on menu screen
-                    setFileEditStatus({}); // Clear the file status for the next run
-                }, failedEdits.length > 0 || writeError ? 4000 : 2500); // Longer delay if there were errors
-            });
+            // 8. Return to menu after a delay
+            setTimeout(() => {
+                setMode('menu');
+                // Status message is already set, keep it for context on menu screen
+                setFileEditStatus({}); // Clear the file status for the next run
+            }, failedEdits.length > 0 ? 4000 : 2500); // Longer delay if there were errors
+            // });
 
         } catch (error) {
              // Handle errors during getModifiedFiles or initial setup
-             console.error("\nError processing pasted content for edits:", error);
+             logger.error("\nError processing pasted content for edits:", error);
              setMode('error'); // Show error state
              setSafeStatusMessage(`Error preparing edits: ${error.message}. Operation cancelled.`);
              setFileEditStatus({}); // Clear status
@@ -623,6 +627,6 @@ try {
     // Ensure terminal is large enough or provide guidance? (Optional)
     render(<App />);
 } catch (renderError) {
-    console.error("Fatal Error rendering Ink application.", renderError);
+    logger.error("Fatal Error rendering Ink application.", renderError);
     process.exit(1);
 }

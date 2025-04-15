@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { zodResponseFormat } from "openai/helpers/zod";
 import { z } from "zod";
+import logger from "./logger.js";
 
 const fence = "`"
 
@@ -17,7 +18,11 @@ ALWAYS use the full path, use the files structure to find the right file path ot
 All changes to files must use this *SEARCH/REPLACE block* format.
 ONLY EVER RETURN CODE IN A *SEARCH/REPLACE BLOCK*!
 
-The user request may have changes not related to this file, SKIP THOSE IN YOUR RESPONSE.
+Some of the changes are not relevant to this current file ie. ${filePath}, SKIP THOSE IN YOUR RESPONSE.
+
+The user request also may be in different format, MAKE SURE TO ONLY USE THE *SEARCH/REPLACE BLOCK*.
+
+Please make sure the block is formatted correctly with \`<<<<<<< SEARCH\`, \`=======\` and \`>>>>>>> REPLACE\` as shown below.
 
 EXAMPLE:
 
@@ -31,7 +36,7 @@ To make this change we need to modify ${fence}${filePath}${fence} to:
 
 Here are the *SEARCH/REPLACE* blocks:
 
-${fence}${fence}${fence}python
+${fence}${fence}${fence}
 <<<<<<< SEARCH
 from flask import Flask
 =======
@@ -40,7 +45,7 @@ from flask import Flask
 >>>>>>> REPLACE
 ${fence}${fence}${fence}
 
-${fence}${fence}${fence}python
+${fence}${fence}${fence}
 <<<<<<< SEARCH
 def factorial(n):
     "compute factorial"
@@ -54,7 +59,7 @@ def factorial(n):
 >>>>>>> REPLACE
 ${fence}${fence}${fence}
 
-${fence}${fence}${fence}python
+${fence}${fence}${fence}
 <<<<<<< SEARCH
     return str(factorial(n))
 =======
@@ -70,6 +75,17 @@ The user request has the instructions on what changes need to be done in the cod
 Return a list of files that need to be modified. Please always return full path.
 `
 
+
+const systemPromptFullEdit = (filePath) => `Act as an expert software developer.
+Always use best practices when coding.
+Respect and use existing conventions, libraries, etc that are already present in the code base.
+
+The user request has the instructions on what changes need to be done. Apply the changes to the file given and return the ENTIRE modified file content back.
+
+The user request may have changes not related to this file, SKIP THOSE IN YOUR RESPONSE.
+
+`
+
 function getOpenai(){
     const openai = new OpenAI({
         apiKey: process.env.GEMINI_KEY,
@@ -78,12 +94,16 @@ function getOpenai(){
     return openai;
 }
 
-export async function applyEdit(content, filePath, lastResponse, errorsFromLastResponse){
+export async function applyEdit(content, filePath, currentFileContent, lastResponse, errorsFromLastResponse){
     const openai = getOpenai();
     const response = await openai.chat.completions.create({
         model: "gemini-2.0-flash",
         messages: [
             { role: "system", content: systemPrompt(filePath) },
+            {
+                role: "user",
+                content: "Original file content:\n\n\`\`\`\n" + currentFileContent + "\n\`\`\`",
+            },
             {
                 role: "user",
                 content: content,
@@ -121,5 +141,31 @@ export async function getModifiedFiles(userRequest){
     });
 
     // console.log(response.choices[0].message);
+    return JSON.parse(response.choices[0].message.content);
+}
+
+export async function applyEditInFull(content, filePath, currentFileContent){
+    const ModifiedFile = z.object({
+        fileContent: z.string(),
+      });
+    const openai = getOpenai();
+    const response = await openai.chat.completions.create({
+        model: "gemini-2.0-flash",
+        messages: [
+            { role: "system", content: systemPromptFullEdit(filePath) },
+            {
+                role: "user",
+                content: "Original file content:\n\n\`\`\`\n" + currentFileContent + "\n\`\`\`",
+            },
+            {
+                role: "user",
+                content: content,
+            }
+        ],
+        response_format: zodResponseFormat(ModifiedFile),
+    });
+
+    logger.info("full edit response: ", filePath, response.choices[0].message.content);
+
     return JSON.parse(response.choices[0].message.content);
 }
