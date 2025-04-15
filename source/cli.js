@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline'; // Needed for emitKeypressEvents
 import clipboardy from 'clipboardy'; // <-- Import clipboardy
-import { applyEdit } from './editor.js';
+import { applyEdit, getModifiedFiles } from './editor.js';
 
 // Helper function to escape XML special characters
 const escapeXml = (unsafe) => {
@@ -334,10 +334,10 @@ const App = () => {
         setMode('processing'); // Show processing state briefly
         setSafeStatusMessage('Saving pasted content to paste.txt...');
 
-        // Use async writeFile for better responsiveness
-        const edits = await applyEdit(trimmedContent);
+        
+        const filesModified = await getModifiedFiles(trimmedContent);
 
-        fs.writeFile('paste.txt', edits, (err) => {
+        fs.writeFile('paste.txt', filesModified, (err) => {
             if (err) {
                  console.error("\nError saving paste.txt:", err);
                  setMode('error'); // Show error state

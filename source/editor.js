@@ -1,4 +1,6 @@
 import OpenAI from "openai";
+import { zodResponseFormat } from "openai/helpers/zod";
+import { z } from "zod";
 
 const fence = "`"
 
@@ -67,7 +69,7 @@ const modifiedFilesPrompt = `Act as an expert software developer.
 The user request has the instructions on what changes need to be done in the code. The user instruction may also have the file structure relevant to the request.
 
 Return a list of files that need to be modified. Please always return full path.
-```
+`
 
 function getOpenai(){
     const openai = new OpenAI({
@@ -95,6 +97,9 @@ export async function applyEdit(content, filePath){
 }
 
 export async function getModifiedFiles(userRequest){
+    const ModifiedFilesList = z.object({
+        filePaths: z.array(z.string()),
+      });
     const openai = getOpenai();
     const response = await openai.chat.completions.create({
         model: "gemini-2.0-flash",
@@ -102,9 +107,10 @@ export async function getModifiedFiles(userRequest){
             { role: "system", content: modifiedFilesPrompt },
             {
                 role: "user",
-                content: content,
+                content: userRequest,
             },
         ],
+        response_format: zodResponseFormat(ModifiedFilesList),
     });
 
     // console.log(response.choices[0].message);
