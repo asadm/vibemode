@@ -1,13 +1,13 @@
 // source/components/ApplyEditsUI.js
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Text, useApp } from 'ink';
+import { Box, Text, useApp, useInput } from 'ink'; // Added useInput
 import readline from 'readline';
 import fs from 'fs';
 import { applyEdit, applyEditInFull, getModifiedFiles } from '../editor.js';
 import { writeDiff } from '../writeDiff.js';
 import logger from '../logger.js';
 
-const ApplyEditsUI = ({
+const ApplyEditsUI = ({ //NOSONAR - Ignore complexity for now
     mode,
     setMode,
     setStatusMessage,
@@ -25,11 +25,13 @@ const ApplyEditsUI = ({
     // --- Local State --- (Only for UI elements within this component's lifecycle)
     const [applyInputStatus, setApplyInputStatus] = useState("");
     const [countdown, setCountdown] = useState(null);
+    const [showRetryOptions, setShowRetryOptions] = useState(false); // State to control retry prompt visibility
     // Removed processingComplete state, parent controls flow
 
     // --- Refs ---
     const pasteInputRef = useRef("");
     const isHandlingRawInput = useRef(false);
+    const originalContentRef = useRef(''); // Ref to store the original pasted content for retries
     const originalRawMode = useRef(null);
     const saveTimerRef = useRef(null);
     const countdownIntervalRef = useRef(null);
@@ -46,7 +48,12 @@ const ApplyEditsUI = ({
                 menuTimeoutRef.current = null;
                 logger.info("Cleared menu timeout on unmount.");
             }
+            // Also clear retry/save timers on unmount
+            clearSaveTimer();
+            if (menuTimeoutRef.current) clearTimeout(menuTimeoutRef.current);
+            if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []); // Empty dependency array runs only on mount and unmount
 
 
@@ -76,6 +83,7 @@ const ApplyEditsUI = ({
              return;
         }
 
+        originalContentRef.current = trimmedContent; // Store for potential retries
         // 1. Indicate processing started
         setMode("processing");
         setStatusMessage("Parsing pasted content to identify files...");
@@ -97,10 +105,10 @@ const ApplyEditsUI = ({
                     menuTimeoutRef.current = null;
                 }, 1500);
                 return;
-            }
+            } //NOSONAR
 
             // 3. Set initial "pending" state in parent and switch mode
-            const initialStatus = filePaths.reduce((acc, fp) => { acc[fp] = "pending"; return acc; }, {});
+            const initialStatus = filePaths.reduce((acc, fp) => { acc[fp] = { status: 'pending' }; return acc; }, {});
             logger.info(`Setting initial pending status in parent: ${JSON.stringify(initialStatus)}`);
             setFileEditStatus(initialStatus); // Update parent state FIRST
 
@@ -116,8 +124,9 @@ const ApplyEditsUI = ({
             const editPromises = filePaths.map(async (filePath) => {
                 logger.info(`Processing file START: ${filePath}`);
                 let currentStatus = "pending"; // Should display as pending from initialStatus
+                let errorResult = null; // Store error for state update
                 try {
-                    if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
+                    if (!fs.existsSync(filePath)) throw new Error(`File not found`);
                     const fileContent = fs.readFileSync(filePath, "utf8");
                     const result = await applyEdit(trimmedContent, filePath, fileContent);
                     const errors = await writeDiff(filePath, result);
@@ -126,14 +135,16 @@ const ApplyEditsUI = ({
                     currentStatus = "done";
                     return { filePath, status: currentStatus, success: true };
                 } catch (error) {
-                    logger.error(`Error processing file ${filePath}: ${error.message || String(error)}`);
+                    errorResult = error.message || String(error);
+                    logger.error(`Error processing file ${filePath}: ${errorResult}`);
                     currentStatus = "error";
-                    return { filePath, status: currentStatus, success: false, error: error.message || String(error) };
+                    return { filePath, status: currentStatus, success: false, error: errorResult };
                 } finally {
                     logger.info(`Processing file END: ${filePath} with status ${currentStatus}`);
-                    // ** Add incremental update back here - crucial for live updates **
-                    // If this causes issues again, the parent's update/render cycle is the problem
-                    setFileEditStatus(prev => ({ ...prev, [filePath]: currentStatus }));
+                    // Update parent state incrementally with status and potential error
+                    setFileEditStatus(prev => ({ ...prev, [filePath]: {
+                        status: currentStatus, ...(currentStatus === 'error' ? { error: errorResult } : {})
+                    } }));
                     logger.info(`QUEUED incremental parent update for ${filePath}: ${currentStatus}`);
                 }
             });
@@ -142,31 +153,38 @@ const ApplyEditsUI = ({
             const results = await Promise.all(editPromises); // Need results to calculate final message
             logger.info(`Promise.all finished. Results count: ${results.length}`);
 
-            // 5. Calculate and set final status message in parent
-            // No need to set final state again if incremental updates are used and work
+            // 5. Calculate final status and decide next step
             const successfulEdits = results.filter(r => r.success).length;
-            const failedEdits = results.filter(r => !r.success).length;
-            let finalMessage = `Applied edits to ${successfulEdits} file(s). Check log.log for details.`;
-            if (failedEdits > 0) {
-                finalMessage += ` Failed edits for ${failedEdits} file(s) (see log.log and console).`;
+            const failedFiles = results.filter(r => !r.success);
+
+            if (failedFiles.length > 0) {
+                // Errors occurred: Show retry options
+                const finalMessage = `Applied edits to ${successfulEdits} file(s) with ${failedFiles.length} error(s).`;
+                logger.warn(`${finalMessage} - Presenting retry options.`);
+                setStatusMessage(`${finalMessage} Press [R] to Retry failed, [ESC] for Main Menu.`);
+                if (menuTimeoutRef.current) clearTimeout(menuTimeoutRef.current); // Clear any existing menu timeout
+
+                // Wait a moment before enabling input to avoid race conditions
+                setTimeout(() => setShowRetryOptions(true), 100);
+
+            } else {
+                // All successful: Set final message and return to menu
+                const finalMessage = `Successfully applied edits to ${successfulEdits} file(s). Returning to menu...`;
+                logger.info(finalMessage);
+                setStatusMessage(finalMessage);
+
+                logger.info("Setting timeout to return to menu.");
+                if (menuTimeoutRef.current) clearTimeout(menuTimeoutRef.current); // Clear just in case
+                menuTimeoutRef.current = setTimeout(() => {
+                    logger.info("Menu timeout finished.");
+                    setMode("menu"); // Parent changes mode
+                    // Parent should clear fileEditStatus if desired when returning to menu
+                    // e.g., inside a useEffect in parent that watches for mode === 'menu'
+                    menuTimeoutRef.current = null;
+                }, 2500);
             }
-            logger.info(`Setting final status message in parent: ${finalMessage}`);
-            setStatusMessage(finalMessage); // Set final message
 
-
-            // 6. Set timeout to return to menu (parent handles mode change)
-            logger.info("Setting timeout to return to menu.");
-            if (menuTimeoutRef.current) clearTimeout(menuTimeoutRef.current); // Clear just in case
-            menuTimeoutRef.current = setTimeout(() => {
-                logger.info("Menu timeout finished.");
-                setMode("menu"); // Parent changes mode
-                // Parent should clear fileEditStatus if desired when returning to menu
-                // e.g., inside a useEffect in parent that watches for mode === 'menu'
-                menuTimeoutRef.current = null;
-            }, failedEdits > 0 ? 4000 : 2500);
-
-
-        } catch (error) {
+        } catch (error) { //NOSONAR
             logger.error(`Error during edit preparation/processing: ${error}`);
             setMode("error"); // Let parent handle error display
             setStatusMessage(`Error preparing edits: ${error.message}. Operation cancelled.`);
@@ -177,6 +195,107 @@ const ApplyEditsUI = ({
                  setStatusMessage("");
                  menuTimeoutRef.current = null;
                 }, 3000);
+        }
+    };
+
+    // --- Handler: Retry Failed Edits ---
+    const handleRetryFailed = async () => {
+        setShowRetryOptions(false); // Hide options while retrying
+        logger.info("--- Starting handleRetryFailed ---");
+
+        const filesToRetry = Object.entries(fileEditStatus)
+            .filter(([_, data]) => data?.status === 'error') // Check status property
+            .map(([filePath, data]) => ({ filePath, error: data.error })); // Keep track of path and previous error if needed
+
+        if (filesToRetry.length === 0) {
+            logger.info("Retry called, but no files marked as error.");
+            // Maybe return to menu or show a message? For now, show menu option again.
+            setStatusMessage(`No files currently marked with errors. Press [ESC] for Main Menu.`);
+            setTimeout(() => setShowRetryOptions(true), 100); // Re-show options
+            return;
+        }
+
+        setStatusMessage(`Retrying ${filesToRetry.length} failed file(s)...`);
+
+        // Mark files as 'retrying' in parent state
+        const retryingStatus = filesToRetry.reduce((acc, { filePath }) => {
+            acc[filePath] = { status: 'retrying' }; // Update with status object
+            return acc;
+        }, {});
+        setFileEditStatus(prev => ({ ...prev, ...retryingStatus }));
+        logger.info(`Marked files for retry: ${JSON.stringify(filesToRetry.map(f=>f.filePath))}`);
+
+        // --- Retry Processing Logic (similar to handlePasteSave loop) ---
+        const originalContent = originalContentRef.current; // Get the saved original paste
+        if (!originalContent) {
+            logger.error("Cannot retry: Original pasted content is missing.");
+            setStatusMessage("Error: Cannot retry, original content lost. Returning to menu.");
+            setMode("menu"); // Go back to menu on critical error
+            return;
+        }
+
+        const retryPromises = filesToRetry.map(async ({ filePath }) => {
+            logger.info(`Retrying file START: ${filePath}`);
+            let currentStatus = 'retrying';
+            let retryError = null; // Store error from this retry attempt
+            try {
+                // Read the *current* file content, as it might have been changed by other successful edits
+                if (!fs.existsSync(filePath)) throw new Error(`File not found`);
+                const fileContent = fs.readFileSync(filePath, "utf8");
+
+                // Call applyEdit again with original paste content and current file content
+                const result = await applyEdit(originalContent, filePath, fileContent); // Use originalContentRef.current
+                const errors = await writeDiff(filePath, result);
+                if (errors) throw new Error(errors);
+
+                logger.info(`Successfully applied RETRY edit to ${filePath}`);
+                currentStatus = 'done';
+                return { filePath, status: currentStatus, success: true };
+            } catch (error) {
+                retryError = error.message || String(error); // Capture the error message
+                logger.error(`Error RETRYING file ${filePath}: ${retryError}`);
+                currentStatus = 'error';
+                return { filePath, status: currentStatus, success: false, error: retryError };
+            } finally {
+                logger.info(`Retrying file END: ${filePath} with status ${currentStatus}`);
+                // Update parent state incrementally for the retried file
+                setFileEditStatus(prev => ({ ...prev, [filePath]: {
+                    status: currentStatus, ...(currentStatus === 'error' ? { error: retryError } : {})
+                } }));
+                logger.info(`QUEUED incremental parent update for RETRIED ${filePath}: ${currentStatus}`);
+            }
+        });
+
+        logger.info("Waiting for RETRY Promise.all...");
+        const retryResults = await Promise.all(retryPromises);
+        logger.info(`Retry Promise.all finished. Results count: ${retryResults.length}`);
+
+        // --- Handle Retry Results ---
+        const stillFailingFiles = retryResults.filter(r => !r.success);
+        const newlySuccessfulFiles = retryResults.filter(r => r.success).length;
+
+        if (stillFailingFiles.length > 0) {
+            // Failures persist: Show retry options again
+            const finalMessage = `Retry finished. ${newlySuccessfulFiles} succeeded, ${stillFailingFiles.length} still failed.`;
+            logger.warn(`${finalMessage} - Presenting retry options again.`);
+            setStatusMessage(`${finalMessage} Press [R] to Retry again, [ESC] for Main Menu.`);
+            if (menuTimeoutRef.current) clearTimeout(menuTimeoutRef.current);
+             // Wait a moment before enabling input
+             setTimeout(() => setShowRetryOptions(true), 100);
+
+        } else {
+            // All retries successful: Set final message and return to menu
+            const finalMessage = `All ${filesToRetry.length} previously failed files successfully edited on retry! Returning to menu...`;
+            logger.info(finalMessage);
+            setStatusMessage(finalMessage);
+
+            logger.info("Setting timeout to return to menu after successful retry.");
+            if (menuTimeoutRef.current) clearTimeout(menuTimeoutRef.current);
+            menuTimeoutRef.current = setTimeout(() => {
+                logger.info("Menu timeout finished post-retry.");
+                setMode("menu");
+                menuTimeoutRef.current = null;
+            }, 2500);
         }
     };
 
@@ -223,15 +342,15 @@ const ApplyEditsUI = ({
                     handlePasteSave(contentToSave); // Call the main handler
                }, 1500);
            } else {
-                let statusUpdate = `Pasting... Len: ${pasteInputRef.current.length}.`;
+                let statusUpdate = `Pasting...`;
                 if (key.name === "backspace") {
-                    if (pasteInputRef.current.length > 0) { pasteInputRef.current = pasteInputRef.current.slice(0, -1); statusUpdate += " Save cancelled."; } else { statusUpdate = `Paste buffer empty. Save cancelled.`; }
+                    if (pasteInputRef.current.length > 0) { pasteInputRef.current = pasteInputRef.current.slice(0, -1); statusUpdate; } else { statusUpdate = `Paste buffer empty. Save cancelled.`; }
                 } else if (key.name === "tab") {
-                    pasteInputRef.current += "    "; statusUpdate += " Save cancelled.";
+                    pasteInputRef.current += "    "; statusUpdate;
                 } else if (str && !key.ctrl && !key.meta && !key.escape) { // Filter out control chars etc.
-                    pasteInputRef.current += str; statusUpdate += " Save cancelled.";
+                    pasteInputRef.current += str; statusUpdate;
                 } else {
-                     statusUpdate = `Key pressed. Save cancelled. Pasting... Len: ${pasteInputRef.current.length}.`;
+                    //  statusUpdate = `Key pressed. Pasting...`;
                 }
                 setSafeApplyInputStatus(statusUpdate);
            }
@@ -282,12 +401,28 @@ const ApplyEditsUI = ({
     // Include all dependencies used within the effect or its setup/cleanup
     }, [mode, stdin, setRawMode, isRawModeSupported, exit, setMode, setStatusMessage, onEscape]);
 
+    // --- Effect for Retry/Escape Input ---
+    useInput((input, key) => {
+        if (!showRetryOptions) return; // Only process input if options are shown
+
+        if (input === 'r' || input === 'R') {
+            logger.info("Retry key (R) detected.");
+            handleRetryFailed(); // Trigger the retry process
+        } else if (key.escape) {
+            logger.info("Escape key detected during retry prompt.");
+            setShowRetryOptions(false); // Hide options immediately
+            onEscape(); // Call the escape handler passed from parent (goes to menu)
+        }
+         // Add logging for other keys if needed for debugging
+         // else { logger.debug(`Ignoring key '${input}' while retry options shown.`); }
+    }, { isActive: showRetryOptions }); // Hook is active only when showRetryOptions is true
+
 
     // --- Render Logic ---
     // Reads props from parent (mode, statusMessage, fileEditStatus)
-    logger.info(`--- Rendering --- Mode: ${mode}`);
+    logger.info(`--- Rendering --- Mode: ${mode}, ShowRetry: ${showRetryOptions}`);
     // Log the prop value received during this render cycle
-    console.log(`Render state: props.fileEditStatus (via console): ${JSON.stringify(fileEditStatus)}`);
+    // console.log(`Render state: props.fileEditStatus (via console): ${JSON.stringify(fileEditStatus)}`);
 
     if (mode === "applyInput") {
         const previewLength = 300;
@@ -297,60 +432,82 @@ const ApplyEditsUI = ({
             <Box flexDirection="column" padding={1} borderStyle="round" borderColor="cyan" minWidth={60}>
                 <Box paddingX={1} marginBottom={1}><Text color="cyan" bold>--- Apply Edits: Paste Mode ---</Text></Box>
                 {applyInputStatus && <Box paddingX={1} marginBottom={1}><Text wrap="wrap">{applyInputStatus}</Text></Box>}
-                {countdown !== null && <Box marginTop={1} marginBottom={1} marginX={1} borderColor="yellow" borderStyle="single" paddingX={1} alignSelf="flex-start"><Text color="yellow"> Finalizing... Saving in {countdown} </Text></Box>}
+                {countdown !== null && <Box marginTop={1} marginBottom={1} marginX={1} borderColor="yellow" borderStyle="single" paddingX={1} alignSelf="flex-start"><Text color="yellow"> Finalizing... Applying edits in {countdown} </Text></Box>}
                 <Box marginX={1} marginBottom={1} padding={1} borderStyle="single" borderColor="gray" minHeight={5}><Text dimColor wrap="end">{previewText || "(Paste content here...)"}</Text></Box>
-                <Box paddingX={1}><Text color="dim">Paste content now. Press Enter when finished. Save triggers after 1.5s pause. Any key cancels save. ESC returns to menu.</Text></Box>
+                <Box paddingX={1}><Text color="dim">Paste content now. Press Enter to apply. ESC returns to menu.</Text></Box>
             </Box>
         );
     }
 
-    if (mode === "applyingEdits") {
-        const statusIndicators = { pending: "⏳", done: "✅", error: "❌" };
+    if (mode === "applyingEdits" || mode === "processing") { // Keep rendering status while processing/applying
+        const statusIndicators = { pending: "⏳", done: "✅", error: "❌", retrying: "🔄" };
         // Use the prop directly from parent
         const currentFileStatus = typeof fileEditStatus === 'object' && fileEditStatus !== null ? fileEditStatus : {};
+        // Log the file status object being rendered
+        // logger.info(`Render applyingEdits: fileEditStatus = ${JSON.stringify(currentFileStatus)}`);
         const filePaths = Object.keys(currentFileStatus);
-        logger.info(`Render applyingEdits: Displaying ${filePaths.length} files from props.fileEditStatus.`);
+        logger.info(`Render applyingEdits/processing: Displaying ${filePaths.length} files from props.fileEditStatus.`);
+
+        // Determine border color based on overall state or final message
+        let borderColor = 'magenta'; // Default for applyingEdits
+        if (mode === 'processing') borderColor = 'yellow';
+        if (statusMessage.includes('error(s)') || statusMessage.includes('failed')) borderColor = 'red';
+        if (statusMessage.includes('Successfully applied')) borderColor = 'green';
 
         return (
-            <Box flexDirection="column" padding={1} borderStyle="round" borderColor="magenta" minWidth={60}>
+            <Box flexDirection="column" padding={1} borderStyle="round" borderColor={borderColor} minWidth={60}>
                 {statusMessage && ( // Display parent's status message
                     <Box paddingX={1} marginBottom={1}>
-                        <Text wrap="wrap" color="magenta">{statusMessage}</Text>
+                        <Text wrap="wrap" color={borderColor}>{statusMessage}</Text>
                     </Box>
                 )}
                 <Box flexDirection="column" paddingX={1}>
                     {/* Show identifying message based on filePaths length and status message content */}
-                    {filePaths.length === 0 && statusMessage?.includes("Applying edits") && (
-                         <Text dimColor> (Identifying files...)</Text> // Show this if parent says "Applying" but state is empty
+                    {filePaths.length === 0 && (mode === 'processing' || statusMessage?.includes("Applying edits")) && (
+                         <Text dimColor> (Identifying files...)</Text> // Show this if parent says "Applying" or "Processing" but state is empty
                     )}
                     {/* Map over sorted file paths */}
                     {filePaths.length > 0 && filePaths.sort().map((filePath) => {
-                        const status = currentFileStatus[filePath];
+                        const statusData = currentFileStatus[filePath] || {}; // Default to empty object if missing
+                        const status = statusData.status;
+                        const errorMsg = status === 'error' ? statusData.error : null;
                         const indicator = statusIndicators[status] || "?"; // Default to ? if status is unexpected
                         let textColor;
                         switch (status) {
                             case "done": textColor = "green"; break;
                             case "error": textColor = "red"; break;
+                            case "retrying": textColor = "yellow"; break;
                             default: textColor = undefined; // Includes 'pending'
                         }
+                        // Limit error message length for display
+                        const displayError = errorMsg ? ` (${errorMsg.slice(0, 70)}${errorMsg.length > 70 ? '...' : ''})` : '';
                         return (
                             <Box key={filePath} marginLeft={1}>
                                 <Text>
                                     {indicator}{" "}
-                                    <Text color={textColor}>
+                                    <Text color={textColor || undefined}> {/* Ensure undefined if no specific color */}
                                         {filePath}
                                     </Text>
+                                    {status === 'error' && displayError && <Text color="red">{displayError}</Text>}
                                 </Text>
                             </Box>
                         );
                     })}
                 </Box>
+                 {/* Render Retry options directly below the file list if needed */}
+                 {showRetryOptions && (
+                    <Box marginTop={1} paddingX={1}>
+                        <Text color='yellow'>Press [R] to Retry failed, [ESC] for Main Menu.</Text>
+                    </Box>
+                 )}
             </Box>
         );
     }
 
-    logger.info(`--- Rendering mode ${mode}, returning null ---`);
-    return null; // Return null if not in a rendered mode
+
+    // Fallback or other modes (like done/error if parent handles them separately) might render null here
+    logger.info(`--- Rendering mode ${mode}, returning null (or handled by parent) ---`);
+    return null; // Return null if not in a rendered mode handled above
 };
 
 export default ApplyEditsUI;
