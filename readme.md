@@ -7,6 +7,8 @@ Pack your entire repository (or selected parts) into an AI-friendly format and a
 1.  **Pack Context:** Package selected files from your project (respecting `.gitignore`) into a single, structured XML format, perfect for pasting into an AI chat interface.
 2.  **Apply Changes:** Take the diff-like output provided by an AI (in any format it gives it back to you) and apply those changes directly back to your local files using the Gemini API.
 
+![Preview](https://raw.githubusercontent.com/asadm/vibemode/master/preview.gif "Preview")
+
 ## 🤔 Why
 
 Sure you can use Cursor or Copilot but I usually resort to using the model directly using the official UI they provide by copying relevant (or all) my code into the chat, be it ChatGPT or AI Studio. 
