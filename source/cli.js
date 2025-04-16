@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import React, { useState, useMemo, useEffect } from "react"; // Added useEffect
 import { render, useInput, useApp, useStdin } from "ink";
 import fs from "fs";
