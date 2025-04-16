@@ -1,8 +1,8 @@
 # vibemode
 
-Pack your entire repository (or selected parts) into an AI-friendly format and apply AI suggested changes back with ease, all from your terminal.
+Pack your entire repository (or selected files) into an AI-friendly format and also apply AI suggested changes back with ease, all from your terminal.
 
-`vibemode` is a terminal-based tool designed to streamline interactions with Large Language Models (LLMs) like Google Gemini for code generation and refactoring. It helps you:
+`vibemode` is a CLI-based code companion to help when you are coding using LLM directly from ChatGPT UI, AI Studio, etc.
 
 1.  **Pack Context:** Package selected files from your project (respecting `.gitignore`) into a single, structured XML format, perfect for pasting into an AI chat interface.
 2.  **Apply Changes:** Take the diff-like output provided by an AI (in any format it gives it back to you) and apply those changes directly back to your local files using the Gemini API.
@@ -12,8 +12,8 @@ Pack your entire repository (or selected parts) into an AI-friendly format and a
 
 ## 🤔 Why
 
-Sure you can use Cursor or Copilot but I usually resort to using the model directly using the official UI they provide by copying relevant (or all) my code into the chat, be it ChatGPT or AI Studio. 
-I then want to apply the suggested changes back to my repo. This is the missing glue for this workflow!
+Sure, you can use Cursor or Copilot or Aider but I usually resort to using the model directly using the official UI they provide by copying relevant (or all) my code into the chat UI.
+The model then suggests changes in chat. I then want to apply the suggested changes back to my repo. `vibemode` is the missing glue for this workflow!
 
 ## ✨ Features
 
@@ -33,14 +33,14 @@ No installation is required! Run directly using `npx`:
 npx vibemode
 ```
 
-This will launch the interactive terminal interface. Follow the prompts to either "Pack files" or "Apply edits".
+This will launch the tool and show the following options:
 
-*   **Pack files:** Enter glob patterns or file/directory paths. Press Enter on an empty input line when done to copy the XML to your clipboard.
-*   **Apply edits:** Paste the response from your AI containing the SEARCH/REPLACE blocks.
+*   **Pack files:** Let's you pick file/directory to pack. Press Enter when done to copy the "packed" XML to your clipboard, which you paste into your favorite LLM UI.
+*   **Apply edits:** Paste the response from your model, which `vibemode` parses using a smaller model and applies to the file.
 
 ## 🔧 Applying Edits (Requires Gemini API Key)
 
-The "Apply edits from paste" feature uses the Google Gemini API (specifically the `gemini-2.0-flash` model) to understand and apply changes described in a specific format within the pasted text.
+The "Apply edits from paste" feature currently uses the Google Gemini API (specifically the `gemini-2.0-flash` model) to understand and apply changes described in a specific format within the pasted text.
 
 **To use this feature, you MUST:**
 
