@@ -124,6 +124,7 @@ const App = () => {
             return (
                 <ApplyEditsUI
                     mode={mode}
+                    statusMessage={statusMessage}
                     setMode={setMode}
                     setStatusMessage={setSafeStatusMessage} // Pass the central setter
                     stdin={stdin}

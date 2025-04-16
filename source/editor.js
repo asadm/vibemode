@@ -22,6 +22,8 @@ Some of the changes are not relevant to this current file ie. ${filePath}, SKIP 
 
 The user request also may be in different format, MAKE SURE TO ONLY USE THE *SEARCH/REPLACE BLOCK*.
 
+Make sure search block exists in original file and is NOT empty
+
 Please make sure the block is formatted correctly with \`<<<<<<< SEARCH\`, \`=======\` and \`>>>>>>> REPLACE\` as shown below.
 
 EXAMPLE:
@@ -150,7 +152,7 @@ export async function applyEditInFull(content, filePath, currentFileContent){
       });
     const openai = getOpenai();
     const response = await openai.chat.completions.create({
-        model: "gemini-2.0-flash",
+        model: "gemini-2.0-flash",//"gemini-2.5-pro-preview-03-25",
         messages: [
             { role: "system", content: systemPromptFullEdit(filePath) },
             {
@@ -163,6 +165,7 @@ export async function applyEditInFull(content, filePath, currentFileContent){
             }
         ],
         response_format: zodResponseFormat(ModifiedFile),
+        max_completion_tokens: 65536
     });
 
     logger.info("full edit response: ", filePath, response.choices[0].message.content);

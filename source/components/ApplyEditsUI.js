@@ -9,15 +9,17 @@ import { writeDiff } from '../writeDiff.js';
 import logger from '../logger.js';
 
 const ApplyEditsUI = ({
-    mode, // Needed to switch between "applyInput" and "applyingEdits" views
+    mode,
+    // Corrected props: Receive BOTH the function and the value
     setMode,
-    setStatusMessage, // For setting messages on mode change/completion
-    stdin, // Passed from useStdin() in parent
-    setRawMode, // Passed from useStdin() in parent
-    isRawModeSupported, // Passed from useStdin() in parent
-    onEscape, // Function to call when Esc is pressed
+    setStatusMessage, // Function to update parent state
+    statusMessage,    // Value from parent state (no longer duplicated in destructuring args)
+    stdin,
+    setRawMode,
+    isRawModeSupported,
+    onEscape,
 }) => {
-    const { exit } = useApp(); // Need exit for Ctrl+C
+    const { exit } = useApp();
 
     // --- State specific to this component ---
     const [applyInputStatus, setApplyInputStatus] = useState("");
@@ -88,14 +90,16 @@ const ApplyEditsUI = ({
                     const errors = await writeDiff(filePath, result);
 
                     if (errors) {
-                        logger.warn("Retrying with full edit due to writeDiff errors for file: ", filePath, errors);
-                        const { fileContent: modifiedFileContent } = await applyEditInFull(trimmedContent, filePath, fileContent);
-                        if (modifiedFileContent !== undefined && modifiedFileContent !== null) { // Check if content exists
-                            fs.writeFileSync(filePath, modifiedFileContent);
-                            logger.info(`Successfully wrote full content to ${filePath} after retry.`);
-                        } else {
-                            throw new Error(`Full edit retry failed, received null/undefined content for ${filePath}`);
-                        }
+                        logger.error(`\nError applying edit to ${filePath}:`, errors);
+                        throw new Error(errors);
+                        // logger.warn("Retrying with full edit due to writeDiff errors for file: ", filePath, errors);
+                        // const { fileContent: modifiedFileContent } = await applyEditInFull(trimmedContent, filePath, fileContent);
+                        // if (modifiedFileContent !== undefined && modifiedFileContent !== null) { // Check if content exists
+                        //     fs.writeFileSync(filePath, modifiedFileContent);
+                        //     logger.info(`Successfully wrote full content to ${filePath} after retry.`);
+                        // } else {
+                        //     throw new Error(`Full edit retry failed, received null/undefined content for ${filePath}`);
+                        // }
                     }
                     setFileEditStatus(prev => ({ ...prev, [filePath]: "done" }));
                     return { filePath, success: true };
@@ -283,15 +287,16 @@ const ApplyEditsUI = ({
 
         return (
             <Box flexDirection="column" padding={1} borderStyle="round" borderColor="magenta" minWidth={60}>
-                 {/* Use the *parent's* statusMessage for the overall status */}
-                {/* {statusMessage && (
+                 {/* Use the parent's statusMessage for the overall status */}
+                {statusMessage && ( // *** UNCOMMENTED ***
                     <Box paddingX={1} marginBottom={1}>
                         <Text wrap="wrap" color="magenta">{statusMessage}</Text>
                     </Box>
-                )} */}
+                )}
 
                 <Box flexDirection="column" paddingX={1}>
-                    <Text bold>Applying Edits:</Text>
+                    {/* Removed static title, as parent statusMessage serves this role now */}
+                    {/* <Text bold>Applying Edits:</Text> */}
                     {sortedFilePaths.length === 0 && <Text dimColor> (Identifying files...)</Text>}
                     {sortedFilePaths.map((filePath) => {
                         const status = fileEditStatus[filePath];
@@ -300,16 +305,15 @@ const ApplyEditsUI = ({
                             <Box key={filePath} marginLeft={1}>
                                 <Text>
                                     {indicator}{" "}
-                                    <Text color={status === "error" ? "red" : undefined}>{filePath}</Text>
+                                    <Text color={status === "error" ? "red" : status === "done" ? "green" : undefined}> {/* Added green for done */}
+                                        {filePath}
+                                    </Text>
                                 </Text>
                             </Box>
                         );
                     })}
                 </Box>
-                {/* Display final status message at the bottom */}
-                 {/* <Box marginTop={1} paddingX={1}>
-                    <Text wrap="wrap" color="magenta">{statusMessage}</Text>
-                </Box> */}
+                {/* No need to display statusMessage again at the bottom */}
             </Box>
         );
     }
@@ -320,9 +324,10 @@ const ApplyEditsUI = ({
 
 ApplyEditsUI.propTypes = {
     mode: PropTypes.string.isRequired,
+    statusMessage: PropTypes.string, // Make sure parent passes it
     setMode: PropTypes.func.isRequired,
     setStatusMessage: PropTypes.func.isRequired,
-    stdin: PropTypes.object, // Technically EventEmmiter | Readable, but object is fine
+    stdin: PropTypes.object,
     setRawMode: PropTypes.func,
     isRawModeSupported: PropTypes.bool,
     onEscape: PropTypes.func.isRequired,

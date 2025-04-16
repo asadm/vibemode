@@ -1,0 +1,35 @@
+```diff
+--- testfixtures/a.js
++++ testfixtures/a.js
+@@ -1,10 +1,13 @@
++/** Adds two numbers. */
+ export function add(a, b) {
+     console.log(add(1, 2))
+     return a + b;
+ }
+ 
++/** Subtracts the second number from the first. */
+ export function subtract(a, b) {
+     return a - b;
+ }
+ 
++/** Multiplies two numbers. */
+ export function multiply(a, b) {
+     return a * b;
+ }
+
+```
+
+```diff
+--- testfixtures/main.js
++++ testfixtures/main.js
+@@ -2,6 +2,7 @@
+ import { add, subtract } from "./a";
+ 
+ 
++/** Runs the example functions and logs their output. */
+ function run(){
+     console.log(add(1, 2));
+     console.log(subtract(1, 2));
+
+```
