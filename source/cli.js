@@ -121,7 +121,8 @@ const App = () => {
             // fileEditStatus is already cleared above
             setMode("applyInput"); // ApplyEditsUI useEffect will handle setup
         } else if (item.value === "exit") {
-            exit();
+            process.exit(0);
+            // exit();
         }
     };
 
