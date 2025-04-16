@@ -15,6 +15,8 @@ Sure, you can use Cursor or Copilot or Aider but all these tools try to save mon
 So I usually resort to using the model directly using the official UI they provide by copying relevant (or all) my code into the chat UI.
 The model then suggests changes in chat. I then want to apply the suggested changes back to my repo. `vibemode` is the missing glue for this workflow!
 
+⚠️ **Disclaimer:** This is a tool I built for my workflow and I am sharing it with the world. It is not perfect but ofcourse PRs are welcome!
+
 ## ✨ Features
 
 *   **Interactive Packing:** Use glob patterns or type file/directory names with autocomplete to select folders and files to pack.
