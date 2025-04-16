@@ -2,7 +2,6 @@
 import React, { useState } from 'react';
 import { Box, Text } from 'ink';
 import InkTextInput from 'ink-text-input';
-import PropTypes from 'prop-types';
 import { globSync } from 'glob';
 import fs from 'fs';
 import path from 'path';
@@ -162,15 +161,6 @@ const PackFilesUI = ({
             </Box>
         </Box>
     );
-};
-
-PackFilesUI.propTypes = {
-    collectedFiles: PropTypes.instanceOf(Set).isRequired,
-    setCollectedFiles: PropTypes.func.isRequired,
-    setMode: PropTypes.func.isRequired,
-    setStatusMessage: PropTypes.func.isRequired, // For setting messages on mode change
-    ignorePatterns: PropTypes.array.isRequired,
-    onEscape: PropTypes.func.isRequired, // Callback for Escape key
 };
 
 export default PackFilesUI;

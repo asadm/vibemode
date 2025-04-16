@@ -1,7 +1,6 @@
 // source/components/ApplyEditsUI.js
 import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useApp } from 'ink';
-import PropTypes from 'prop-types';
 import readline from 'readline';
 import fs from 'fs';
 import { applyEdit, applyEditInFull, getModifiedFiles } from '../editor.js';
@@ -12,14 +11,14 @@ const ApplyEditsUI = ({
     mode,
     setMode,
     setStatusMessage,
-    statusMessage,
+    statusMessage = "", // Provide default directly
     stdin,
     setRawMode,
     isRawModeSupported,
     onEscape,
     // *** PROPS for Lifted State ***
-    fileEditStatus,      // Receive state from parent
-    setFileEditStatus,   // Receive setter from parent
+    fileEditStatus = {}, // Provide default directly
+    setFileEditStatus,   // Setter is required
 }) => {
     const { exit } = useApp();
 
@@ -352,25 +351,6 @@ const ApplyEditsUI = ({
 
     logger.info(`--- Rendering mode ${mode}, returning null ---`);
     return null; // Return null if not in a rendered mode
-};
-
-ApplyEditsUI.propTypes = {
-    mode: PropTypes.string.isRequired,
-    statusMessage: PropTypes.string,
-    setMode: PropTypes.func.isRequired,
-    setStatusMessage: PropTypes.func.isRequired,
-    stdin: PropTypes.object,
-    setRawMode: PropTypes.func,
-    isRawModeSupported: PropTypes.bool,
-    onEscape: PropTypes.func.isRequired,
-    // *** Prop Types for Lifted State ***
-    fileEditStatus: PropTypes.object.isRequired,
-    setFileEditStatus: PropTypes.func.isRequired,
-};
-
-// Default props for the new props
-ApplyEditsUI.defaultProps = {
-    fileEditStatus: {}, // Parent should provide the actual initial state
 };
 
 export default ApplyEditsUI;

@@ -16,15 +16,15 @@ const defaultGetMatch = (input) => ({ label }) =>
     input.length > 0 && label.toLowerCase().indexOf(input.toLowerCase()) > -1;
 
 const AutoComplete = ({
-    value,
-    placeholder,
-    items, // Expects { label: string, value: any }[]
-    getMatch,
-    onChange,
-    onSelectSubmit, // Renamed from onSubmit to be specific to selection
-    onTextInputSubmit, // New prop for direct text input submission
-    indicatorComponent,
-    itemComponent,
+    value = "",
+    placeholder = "",
+    items = [], // Expects { label: string, value: any }[]
+    getMatch = defaultGetMatch, // Default simple matcher if not provided
+    onChange = noop,
+    onSelectSubmit = noop, // Renamed from onSubmit to be specific to selection
+    onTextInputSubmit = noop, // New prop for direct text input submission
+    indicatorComponent = SelectInput.defaultProps.indicatorComponent,
+    itemComponent = SelectInput.defaultProps.itemComponent,
     selectLimit = 7, // Add a limit for suggestions
 }) => {
     const matches = getMatch(value, items); // Pass items to getMatch

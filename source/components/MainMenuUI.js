@@ -2,9 +2,8 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import SelectInput from 'ink-select-input';
-import PropTypes from 'prop-types';
 
-const MainMenuUI = ({ statusMessage, onSelect }) => {
+const MainMenuUI = ({ statusMessage = "", onSelect }) => {
     const items = [
         { label: "Pack files (copy XML)", value: "pack" },
         { label: "Apply edits from paste", value: "apply" },
@@ -28,13 +27,5 @@ const MainMenuUI = ({ statusMessage, onSelect }) => {
     );
 };
 
-MainMenuUI.propTypes = {
-    statusMessage: PropTypes.string,
-    onSelect: PropTypes.func.isRequired,
-};
-
-MainMenuUI.defaultProps = {
-    statusMessage: "",
-};
 
 export default MainMenuUI;
