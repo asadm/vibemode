@@ -9,8 +9,8 @@ Pack your entire repository (or selected parts) into an AI-friendly format and a
 
 ## 🤔 Why
 
-Sure you can use cursor or copilot but I usually resort to using the model directly from the official UI they provide, be it ChatGPT or AI Studio. 
-But I also want to apply the changes back to my repo. This is the missing glue for this workflow!
+Sure you can use Cursor or Copilot but I usually resort to using the model directly using the official UI they provide by copying relevant (or all) my code into the chat, be it ChatGPT or AI Studio. 
+I then want to apply the suggested changes back to my repo. This is the missing glue for this workflow!
 
 ## ✨ Features
 
