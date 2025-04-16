@@ -1,7 +1,6 @@
-# vibemode
+![logo](./logo.png)
 
-Pack your entire repository (or selected files) into an AI-friendly format and also apply AI suggested changes back with ease, all from your terminal.
-
+Pack your entire repository (or selected files) into an AI-friendly format and also apply AI suggested changes back with ease, all from your terminal. 
 `vibemode` is a CLI-based code companion to help when you are coding using LLM directly from ChatGPT UI, AI Studio, etc.
 
 1.  **Pack Context:** Package selected files from your project (respecting `.gitignore`) into a single, structured XML format, perfect for pasting into an AI chat interface.
