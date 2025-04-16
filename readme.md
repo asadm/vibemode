@@ -7,6 +7,11 @@ Pack your entire repository (or selected parts) into an AI-friendly format and a
 1.  **Pack Context:** Package selected files from your project (respecting `.gitignore`) into a single, structured XML format, perfect for pasting into an AI chat interface.
 2.  **Apply Changes:** Take the diff-like output provided by an AI (in any format it gives it back to you) and apply those changes directly back to your local files using the Gemini API.
 
+## 🤔 Why
+
+Sure you can use cursor or copilot but I usually resort to using the model directly from the official UI they provide, be it ChatGPT or AI Studio. 
+But I also want to apply the changes back to my repo. This is the missing glue for this workflow!
+
 ## ✨ Features
 
 *   **Interactive Packing:** Use glob patterns or type file/directory names with autocomplete to select folders and files to pack.
