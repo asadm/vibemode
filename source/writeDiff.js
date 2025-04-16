@@ -88,7 +88,7 @@ export async function writeDiff(filename, changes) {
              return false;
         } else if (changesAppliedCount === 0 && parsedChanges.length === 0) {
             logger.info(`No changes parsed or applied. File ${filename} not modified.`);
-            return false;
+            throw new Error(`No changes parsed or applied.`);
         } else if (processedContent === currentContent) {
              // This case might happen if search === replace for all changes
             logger.info(`Applied ${changesAppliedCount} change(s), but the final content is identical to the original. File ${filename} not modified.`);
