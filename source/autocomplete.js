@@ -1,68 +1,70 @@
-// source/AutoComplete.js
-import React from "react"; // Import React explicitly
-import { Box, Text } from "ink"; // Use Box and Text from ink directly
-import PropTypes from "prop-types";
-import SelectInput from "ink-select-input";
-import InkTextInput from "ink-text-input"; // Renamed to avoid conflict
-import logger from "./logger.js"; // Optional: for debugging
+// source/autocomplete.js
+import React from 'react';
+import Select from 'ink-select-input';
+import TextInput from 'ink-text-input';
+import { Box, Text } from 'ink';
 
-// Helpers
+// Helpers -------------------------------------------------------------------
 const noop = () => {};
-const not = (a) => !a;
-const isEmpty = (arr) => arr.length === 0;
+const not = a => !a;
+const isEmpty = arr => arr.length === 0;
+const getMatchDefault = input => ({label}) => input.length > 0 && label.toLowerCase().startsWith(input.toLowerCase());
 
-// Default matcher (can be overridden by props)
-const defaultGetMatch = (input) => ({ label }) =>
-    input.length > 0 && label.toLowerCase().indexOf(input.toLowerCase()) > -1;
+// AutoComplete --------------------------------------------------------------
 
 const AutoComplete = ({
-    value = "",
-    placeholder = "",
-    items = [], // Expects { label: string, value: any }[]
-    getMatch = defaultGetMatch, // Default simple matcher if not provided
+    value = '',
+    placeholder = '',
+    items = [],
+    getMatch = getMatchDefault,
     onChange = noop,
-    onSelectSubmit = noop, // Renamed from onSubmit to be specific to selection
-    onTextInputSubmit = noop, // New prop for direct text input submission
-    indicatorComponent = SelectInput.defaultProps.indicatorComponent,
-    itemComponent = SelectInput.defaultProps.itemComponent,
-    selectLimit = 7, // Add a limit for suggestions
+    onSubmit = noop,           // Renamed: For submitting the TEXT value (when no suggestions)
+    onSuggestionSelect = noop, // For selecting a suggestion (click OR Enter on first)
+    indicatorComponent,
+    itemComponent,
+    limit,
 }) => {
-    const matches = getMatch(value, items); // Pass items to getMatch
+    const matches = items.filter(getMatch(value));
     const hasSuggestion = not(isEmpty(matches));
-    const limitedMatches = matches.slice(0, selectLimit); // Limit displayed suggestions
 
-    // Determine if the SelectInput should be focused.
-    // Focus SelectInput only if there are suggestions AND the input value is not empty.
-    // This prevents SelectInput from stealing focus when the input is cleared.
-    const shouldFocusSelect = hasSuggestion && value.trim().length > 0;
+    // Handler specifically for when an item is selected from the list *directly*
+    const handleDirectListSelect = (item) => {
+        onSuggestionSelect(item); // Call the parent's handler
+    };
+
+    // Handler for when Enter is pressed within the TextInput
+    const handleTextInputSubmit = () => {
+        if (hasSuggestion && matches.length > 0) {
+            // If suggestions exist, treat Enter as selecting the *first* suggestion
+            onSuggestionSelect(matches[0]);
+        } else {
+            // Otherwise (no suggestions), submit the current text value
+            onSubmit(value);
+        }
+    };
 
     return (
         <Box flexDirection="column">
-            {/* Input Box */}
+            {/* Text Input */}
             <Box>
-                {/* Optional: Add a label if desired */}
-                {/* <Text>Pattern: </Text> */}
-                <InkTextInput
+                <TextInput
                     value={value}
                     placeholder={placeholder}
                     onChange={onChange}
-                    onSubmit={onTextInputSubmit} // Use the new prop here
-                    // Focus is managed implicitly by Ink based on rendering order/props
-                    // or explicitly if needed, but let's try implicit first.
+                    onSubmit={handleTextInputSubmit} // Use the new conditional handler
                 />
             </Box>
 
-            {/* Suggestions Box */}
-            {/* Only render SelectInput if there are suggestions to avoid empty space */}
+            {/* Suggestions List */}
             {hasSuggestion && (
-                <Box marginTop={1} marginLeft={2}> {/* Indent suggestions */}
-                     <SelectInput
-                        items={limitedMatches} // Use limited matches
-                        onSelect={onSelectSubmit}
-                        focus={shouldFocusSelect} // Conditionally focus SelectInput
+                <Box marginTop={1}>
+                    <Select
+                        items={matches}
+                        onSelect={handleDirectListSelect} // Use specific handler for clicks
+                        focus={hasSuggestion}
                         indicatorComponent={indicatorComponent}
                         itemComponent={itemComponent}
-                        limit={selectLimit} // Pass limit to SelectInput as well
+                        limit={limit}
                     />
                 </Box>
             )}
@@ -70,35 +72,6 @@ const AutoComplete = ({
     );
 };
 
-AutoComplete.propTypes = {
-    value: PropTypes.string,
-    placeholder: PropTypes.string,
-    items: PropTypes.arrayOf(
-        PropTypes.shape({
-            label: PropTypes.string.isRequired,
-            value: PropTypes.any.isRequired,
-        })
-    ),
-    getMatch: PropTypes.func,
-    onChange: PropTypes.func,
-    onSelectSubmit: PropTypes.func, // Renamed prop
-    onTextInputSubmit: PropTypes.func, // New prop
-    indicatorComponent: PropTypes.func,
-    itemComponent: PropTypes.func,
-    selectLimit: PropTypes.number, // Prop for limiting suggestions
-};
-
-AutoComplete.defaultProps = {
-    value: "",
-    placeholder: "",
-    items: [],
-    getMatch: defaultGetMatch, // Default simple matcher if not provided
-    onChange: noop,
-    onSelectSubmit: noop,
-    onTextInputSubmit: noop,
-    indicatorComponent: SelectInput.defaultProps.indicatorComponent,
-    itemComponent: SelectInput.defaultProps.itemComponent,
-    selectLimit: 7, // Default limit
-};
-
 export default AutoComplete;
+
+// ---------------------------------------------------------------------------
