@@ -1,5 +1,5 @@
 {
-	"name": "filepacker-cli",
+	"name": "vibemode",
 	"version": "0.0.0",
 	"license": "MIT",
 	"bin": "dist/cli.js",
