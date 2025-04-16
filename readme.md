@@ -12,7 +12,8 @@ Pack your entire repository (or selected files) into an AI-friendly format and a
 
 ## 🤔 Why
 
-Sure, you can use Cursor or Copilot or Aider but I usually resort to using the model directly using the official UI they provide by copying relevant (or all) my code into the chat UI.
+Sure, you can use Cursor or Copilot or Aider but all these tools try to save money by reducing the context instead of embedding files I included as-is. 
+So I usually resort to using the model directly using the official UI they provide by copying relevant (or all) my code into the chat UI.
 The model then suggests changes in chat. I then want to apply the suggested changes back to my repo. `vibemode` is the missing glue for this workflow!
 
 ## ✨ Features
