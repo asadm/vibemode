@@ -92,7 +92,8 @@ export async function writeDiff(filename, changes) {
         } else if (processedContent === currentContent) {
              // This case might happen if search === replace for all changes
             logger.info(`Applied ${changesAppliedCount} change(s), but the final content is identical to the original. File ${filename} not modified.`);
-            return false;
+            // return false;
+            throw new Error(`Successfully applied ${changesAppliedCount} change(s) but the final content is identical to the original.`);
         }
 
         // No errors and content has changed, proceed to write
