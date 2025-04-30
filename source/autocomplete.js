@@ -3,6 +3,7 @@ import React from 'react';
 import Select from 'ink-select-input';
 import TextInput from 'ink-text-input';
 import { Box, Text } from 'ink';
+import logger from './logger.js'; // Added for debugging potential double calls
 
 // Helpers -------------------------------------------------------------------
 const noop = () => {};
@@ -18,8 +19,8 @@ const AutoComplete = ({
     items = [],
     getMatch = getMatchDefault,
     onChange = noop,
-    onSubmit = noop,           // Renamed: For submitting the TEXT value (when no suggestions)
-    onSuggestionSelect = noop, // For selecting a suggestion (click OR Enter on first)
+    onSubmit = noop,           // For submitting the TEXT value (when no suggestions)
+    onSuggestionSelect = noop, // For selecting a suggestion (click OR Enter/Select action)
     indicatorComponent,
     itemComponent,
     limit,
@@ -27,20 +28,25 @@ const AutoComplete = ({
     const matches = items.filter(getMatch(value));
     const hasSuggestion = not(isEmpty(matches));
 
-    // Handler specifically for when an item is selected from the list *directly*
+    // Handler specifically for when an item is selected from the list (click or Enter on highlighted item)
     const handleDirectListSelect = (item) => {
+        // logger.info(`AutoComplete: handleDirectListSelect called with: ${JSON.stringify(item)}`); // Debug
         onSuggestionSelect(item); // Call the parent's handler
     };
 
-    // Handler for when Enter is pressed within the TextInput
-    const handleTextInputSubmit = () => {
-        if (hasSuggestion && matches.length > 0) {
-            // If suggestions exist, treat Enter as selecting the *first* suggestion
-            onSuggestionSelect(matches[0]);
-        } else {
-            // Otherwise (no suggestions), submit the current text value
-            onSubmit(value);
+    // Handler for when Enter is pressed *within the TextInput*
+    const handleTextInputSubmit = (submittedValue) => { // submittedValue is passed by ink-text-input
+        // logger.info(`AutoComplete: handleTextInputSubmit called with: ${submittedValue}, hasSuggestion: ${hasSuggestion}`); // Debug
+
+        // *** MODIFIED LOGIC ***
+        // Only call the parent's onSubmit (for raw text) if there are NO suggestions.
+        // If suggestions ARE visible, pressing Enter in the TextInput itself should
+        // ideally do nothing, letting the Select component handle the Enter press
+        // via its own onSelect mechanism (which triggers handleDirectListSelect).
+        if (!hasSuggestion) {
+            onSubmit(submittedValue);
         }
+        // Implicitly do nothing if suggestions are present, assuming Select handles it.
     };
 
     return (
@@ -51,7 +57,8 @@ const AutoComplete = ({
                     value={value}
                     placeholder={placeholder}
                     onChange={onChange}
-                    onSubmit={handleTextInputSubmit} // Use the new conditional handler
+                    // Pass the actual submitted value to the handler
+                    onSubmit={(submittedValue) => handleTextInputSubmit(submittedValue)}
                 />
             </Box>
 
@@ -60,8 +67,8 @@ const AutoComplete = ({
                 <Box marginTop={1}>
                     <Select
                         items={matches}
-                        onSelect={handleDirectListSelect} // Use specific handler for clicks
-                        focus={hasSuggestion}
+                        onSelect={handleDirectListSelect} // Use specific handler for Select actions
+                        focus={hasSuggestion} // Let Select handle focus and Enter when visible
                         indicatorComponent={indicatorComponent}
                         itemComponent={itemComponent}
                         limit={limit}
@@ -73,5 +80,3 @@ const AutoComplete = ({
 };
 
 export default AutoComplete;
-
-// ---------------------------------------------------------------------------

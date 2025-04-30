@@ -10,6 +10,17 @@ import ignore from 'ignore'; // <-- Import the ignore package
 import logger from '../logger.js';
 import AutoComplete from '../autocomplete.js';
 
+import { encoding_for_model } from "@dqbd/tiktoken";
+
+let encoder = null;
+
+const getEncoder = () => {
+    if (!encoder) {
+        encoder = encoding_for_model('gpt-4o');
+    }
+    return encoder;
+};
+
 const escapeXml = (unsafe) => {
     if (typeof unsafe !== 'string') {
         try { return String(unsafe); } catch (e) { logger.warn(`Warning: Could not convert value to string for XML escaping: ${unsafe}`); return ''; }
@@ -175,9 +186,10 @@ const PackFilesUI = ({
                     });
                     fileContents += '</files>';
                     const finalXmlContent = dirStructure + fileContents;
-
+                    const tokenCount = getEncoder().encode(finalXmlContent).length;
+                    logger.info(`Generated XML content for ${filesArray.length} files, token count: ${tokenCount}`);
                     clipboardy.write(finalXmlContent).then(() => {
-                        setStatusMessage(`XML for ${collectedFiles.size} files copied to clipboard!`);
+                        setStatusMessage(`XML for ${collectedFiles.size} files copied to clipboard! Token count: ~${tokenCount}.`);
                          setMode('menu');
                     }).catch(copyError => {
                         logger.error('Error copying XML to clipboard:', copyError);

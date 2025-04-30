@@ -19,13 +19,10 @@
 	"files": [
 		"dist"
 	],
-	"dependencies": {
-		
-	},
 	"devDependencies": {
-		"ignore": "^7.0.4",
 		"@babel/cli": "^7.21.0",
 		"@babel/preset-react": "^7.18.6",
+		"@dqbd/tiktoken": "^1.0.21",
 		"@vdemedes/prettier-config": "^2.0.1",
 		"ava": "^5.2.0",
 		"chalk": "^5.2.0",
@@ -36,6 +33,7 @@
 		"eslint-plugin-react-hooks": "^4.6.0",
 		"fuzzysort": "^3.1.0",
 		"glob": "^11.0.1",
+		"ignore": "^7.0.4",
 		"import-jsx": "^5.0.0",
 		"ink": "^5.2.0",
 		"ink-select-input": "^6.0.0",
@@ -47,6 +45,7 @@
 		"prop-types": "^15.8.1",
 		"react": "^18.2.0",
 		"react-devtools-core": "^4.28.5",
+		"tiktoken": "^1.0.21",
 		"xo": "^0.53.1",
 		"zod": "^3.24.2"
 	},
