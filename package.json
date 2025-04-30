@@ -1,6 +1,6 @@
 {
 	"name": "vibemode",
-	"version": "0.0.5",
+	"version": "0.0.6",
 	"license": "Apache-2.0",
 	"bin": {
 		"vibemode": "dist/cli.js"
@@ -22,7 +22,6 @@
 	"devDependencies": {
 		"@babel/cli": "^7.21.0",
 		"@babel/preset-react": "^7.18.6",
-		"@dqbd/tiktoken": "^1.0.21",
 		"@vdemedes/prettier-config": "^2.0.1",
 		"ava": "^5.2.0",
 		"chalk": "^5.2.0",
@@ -72,5 +71,8 @@
 		"presets": [
 			"@babel/preset-react"
 		]
+	},
+	"dependencies": {
+		"@dqbd/tiktoken": "^1.0.21"
 	}
 }
