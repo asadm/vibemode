@@ -1,20 +1,23 @@
 // source/components/PackFilesUI.js
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
-import { globSync } from 'glob';
-import fs from 'fs';
+import { glob } from 'glob'; // Still need async glob
+import fsSync from 'fs'; // Keep sync fs for specific checks if needed (like in processQuery)
+import fs from 'fs/promises'; // Import promises API for async readdir
 import path from 'path';
 import clipboardy from 'clipboardy';
+import ignore from 'ignore'; // <-- Import the ignore package
 import logger from '../logger.js';
-import AutoComplete from '../autocomplete.js'; // Import the AutoComplete component
+import AutoComplete from '../autocomplete.js';
 
 const escapeXml = (unsafe) => {
-     if (typeof unsafe !== 'string') {
-         try { return String(unsafe); } catch (e) { logger.warn(`Warning: Could not convert value to string for XML escaping: ${unsafe}`); return ""; }
-     }
-     const map = {"<": "<", ">": ">", "&": "&", '"':"'", "'": "'"};
-     return unsafe.replace(/[<>&"']/g, c => map[c] || c);
+    if (typeof unsafe !== 'string') {
+        try { return String(unsafe); } catch (e) { logger.warn(`Warning: Could not convert value to string for XML escaping: ${unsafe}`); return ''; }
+    }
+    const map = {'<': '<', '>': '>', '&': '&', "'": '\'', '"': '"'};
+    return unsafe.replace(/[<>&'"]/g, c => map[c] || c);
 };
+
 
 const PackFilesUI = ({
     collectedFiles,
@@ -25,190 +28,304 @@ const PackFilesUI = ({
     onEscape,
 }) => {
     const [globQuery, setGlobQuery] = useState('');
-    const [localStatus, setLocalStatus] = useState("Enter glob pattern, directory name, or start typing for autocomplete. .gitignore respected.");
+    // Initial status indicates loading but allows typing
+    const [localStatus, setLocalStatus] = useState('Scanning directories for autocomplete... You can start typing patterns now.');
     const [availablePaths, setAvailablePaths] = useState([]);
     const [loadingPaths, setLoadingPaths] = useState(true);
 
+    // --- Parallel Directory Scan Effect ---
     useEffect(() => {
-        setLoadingPaths(true);
-        setLocalStatus("Loading file list for autocomplete...");
-        try {
-            const results = globSync('**', {
-                cwd: process.cwd(),
-                ignore: ignorePatterns,
-                mark: true,
-                dot: true,
-            });
-            const items = results.map(p => ({ label: p.replace(/\\/g, '/') }));
-            setAvailablePaths(items);
-            setLocalStatus(`Loaded ${items.length} potential paths. Enter pattern/path, select suggestion, or Enter on empty to finish.`);
-            logger.info(`Loaded ${items.length} paths for glob autocomplete.`);
-        } catch (error) {
-            logger.error("Error fetching directory structure for autocomplete:", error);
-            setLocalStatus(`Error loading file list: ${error.message}. Autocomplete unavailable.`);
-        } finally {
-            setLoadingPaths(false);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+        const fetchPathsParallel = async () => {
+            setLoadingPaths(true);
+            setLocalStatus('Scanning top-level items for autocomplete...');
+            logger.info('Starting parallel directory scan for autocomplete...');
+            const startTime = Date.now();
 
+            try {
+                const cwd = process.cwd();
+                const ig = ignore().add(ignorePatterns); // Initialize ignore filter
 
-    // --- Core Handler ---
-    // This function now handles submitting ANY finalized query/path,
-    // whether typed directly or selected from suggestions.
-    const processQuery = (query) => {
-        const trimmedQuery = query.trim();
-        logger.info(`Processing query: "${trimmedQuery}"`);
-
-        if (trimmedQuery === "" && collectedFiles.size > 0) {
-            // --- Generate XML & Copy ---
-            setMode("processing");
-            setStatusMessage("Generating XML and preparing to copy...");
-            setTimeout(() => { // Keep the timeout for UI responsiveness
+                // 1. Read top-level entries
+                let topLevelEntries;
                 try {
-                    // ... (XML generation logic - unchanged) ...
-                    const filesArray = Array.from(collectedFiles).sort();
-                    let dirStructure = "<directory_structure>\n";
-                    filesArray.forEach(file => { dirStructure += `  ${escapeXml(file)}\n`; });
-                    dirStructure += "</directory_structure>\n\n";
+                    topLevelEntries = await fs.readdir(cwd, { withFileTypes: true });
+                    logger.info(`Read ${topLevelEntries.length} top-level entries.`);
+                } catch (readDirError) {
+                    logger.error(`Error reading top-level directory ${cwd}:`, readDirError);
+                    throw new Error(`Failed to read top-level directory: ${readDirError.message}`);
+                }
 
-                    let fileContents = "<files>\n<!-- This section contains the contents of the collected files. -->\n\n";
+                // 2. Filter top-level entries and separate files/dirs
+                const topLevelFiles = [];
+                const dirsToScan = [];
+                for (const entry of topLevelEntries) {
+                    // Check if the entry itself is ignored
+                    if (!ig.ignores(entry.name)) {
+                        if (entry.isDirectory()) {
+                            dirsToScan.push(entry);
+                        } else if (entry.isFile()) {
+                            // Add file directly (normalize slashes)
+                            topLevelFiles.push(entry.name.replace(/\\/g, '/'));
+                        }
+                        // Ignore symlinks, block devices, etc. for simplicity here
+                    } else {
+                         logger.info(`Ignoring top-level entry: ${entry.name}`);
+                    }
+                }
+                logger.info(`Found ${dirsToScan.length} non-ignored top-level directories to scan and ${topLevelFiles.length} non-ignored top-level files.`);
+                setLocalStatus(`Scanning ${dirsToScan.length} top-level directories in parallel...`);
+
+
+                // 3. Create glob promises for directories
+                const globOptions = {
+                    cwd: cwd,
+                    ignore: ignorePatterns, // Pass ignores for nested filtering
+                    mark: true,
+                    dot: true,
+                    absolute: false,
+                };
+
+                const globPromises = dirsToScan.map(dir => {
+                    const dirPattern = path.join(dir.name, '**').replace(/\\/g, '/'); // Scan recursively
+                    logger.info(`Queueing scan for: ${dirPattern}`);
+                    return glob(dirPattern, globOptions)
+                        .then(results => {
+                             logger.info(`Scan completed for ${dir.name}, found ${results.length} items.`);
+                             // --- FIX: Use glob results directly, just normalize slashes ---
+                             // Glob results with 'cwd' are already relative to cwd and include the directory prefix.
+                             return results.map(p => p.replace(/\\/g, '/'));
+                         })
+                        .catch(err => {
+                            logger.warn(`Failed parallel scan for directory ${dir.name}: ${err.message}`);
+                            return [];
+                        });
+                 });
+
+
+                // 4. Execute scans in parallel and combine results
+                const resultsArrays = await Promise.all(globPromises);
+                logger.info('Parallel scans finished. Combining results...');
+                setLocalStatus('Combining results...');
+
+                // Flatten the array of arrays from glob results
+                const nestedPaths = resultsArrays.flat();
+
+                // Combine top-level files and nested paths, ensure uniqueness and sort
+                const allPathsSet = new Set([...topLevelFiles, ...nestedPaths]);
+                const finalItems = Array.from(allPathsSet)
+                                        .sort()
+                                        .map(p => ({ label: p })); // Format for AutoComplete
+
+                const duration = (Date.now() - startTime) / 1000;
+                setAvailablePaths(finalItems);
+                const statusMsg = `Loaded ${finalItems.length} potential paths (${duration.toFixed(2)}s). Enter pattern/path, select suggestion, or Enter on empty to finish.`;
+                setLocalStatus(statusMsg);
+                logger.info(`Parallel scan finished. ${statusMsg}`);
+
+            } catch (error) {
+                logger.error('Error during parallel scan for autocomplete:', error);
+                setLocalStatus(`Error loading file list: ${error.message}. Autocomplete may be incomplete.`);
+                setAvailablePaths([]); // Clear paths on error
+            } finally {
+                setLoadingPaths(false); // Autocomplete is now ready (or failed)
+            }
+        };
+
+        fetchPathsParallel();
+
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ignorePatterns]); // Rerun if ignorePatterns change
+
+
+    // --- Core Handler (processQuery) --- remains largely the same ---
+    // Uses async glob internally for resolving user patterns
+    const processQuery = async (query) => {
+        const trimmedQuery = query.trim();
+        logger.info(`Processing query: '${trimmedQuery}'`);
+        setLocalStatus('Processing...'); // Indicate processing
+
+        if (trimmedQuery === '' && collectedFiles.size > 0) {
+            // --- Generate XML & Copy --- (remains synchronous I/O)
+            setMode('processing');
+            setStatusMessage('Generating XML and preparing to copy...');
+            setTimeout(() => { // Keep timeout for UI update responsiveness
+                try {
+                    // ... (XML generation logic - unchanged, uses fsSync for checks) ...
+                     const filesArray = Array.from(collectedFiles).sort();
+                    let dirStructure = '<directory_structure>\n';
+                    filesArray.forEach(file => { dirStructure += `  ${escapeXml(file)}\n`; });
+                    dirStructure += '</directory_structure>\n\n';
+
+                    let fileContents = '<files>\n<!-- This section contains the contents of the collected files. -->\n\n';
                     filesArray.forEach(file => {
                         const filePath = path.resolve(process.cwd(), file);
                         try {
-                            if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+                            // Use synchronous checks here as it's part of the final synchronous pack logic
+                            if (!fsSync.existsSync(filePath) || !fsSync.statSync(filePath).isFile()) {
                                 logger.warn(`Skipping non-file or non-existent entry during XML generation: ${file}`);
                                 fileContents += `<!-- Skipped non-file/non-existent: ${escapeXml(file)} -->\n\n`;
                                 return;
                             }
-                            const content = fs.readFileSync(filePath, "utf8");
-                            fileContents += `<file path="${escapeXml(file)}">\n${escapeXml(content)}\n</file>\n\n`;
+                            const content = fsSync.readFileSync(filePath, 'utf8');
+                            fileContents += `<file path='${escapeXml(file)}'>\n${escapeXml(content)}\n</file>\n\n`;
                         } catch (readError) {
-                            fileContents += `<file path="${escapeXml(file)}" error="Could not read file: ${escapeXml(readError.message)}">\n</file>\n\n`;
+                            fileContents += `<file path='${escapeXml(file)}' error='Could not read file: ${escapeXml(readError.message)}'>\n</file>\n\n`;
                             logger.error(`Error reading ${file}: ${readError.message}`);
                         }
                     });
-                    fileContents += "</files>";
+                    fileContents += '</files>';
                     const finalXmlContent = dirStructure + fileContents;
 
                     clipboardy.write(finalXmlContent).then(() => {
-                        setMode("menu");
                         setStatusMessage(`XML for ${collectedFiles.size} files copied to clipboard!`);
+                         setMode('menu');
                     }).catch(copyError => {
-                        logger.error("Error copying XML to clipboard:", copyError);
-                        setMode("menu");
-                        setStatusMessage(`Generated XML, but failed to copy: ${copyError.message}. See logger.`);
+                        logger.error('Error copying XML to clipboard:', copyError);
+                         setStatusMessage(`Generated XML, but failed to copy: ${copyError.message}. See logger.`);
+                         setMode('menu');
                     });
 
                 } catch (error) {
-                    logger.error("Error generating XML content:", error);
-                    setMode("menu");
+                    logger.error('Error generating XML content:', error);
                     setStatusMessage(`Error generating XML: ${error.message}. See logger.`);
-                } finally {
-                    // No need to clear globQuery here as we are leaving the mode
+                    setMode('menu');
                 }
-            }, 50); // Short delay
+            }, 50);
 
-
-        } else if (trimmedQuery !== "") {
-            // --- Process glob or directory ---
+        } else if (trimmedQuery !== '') {
+            // --- Process glob or directory (uses async glob) ---
             let globPatternToUse = trimmedQuery.replace(/\\/g, '/');
             let isDirectoryExpansion = false;
-            const isLikelyDir = availablePaths.some(p => p.label === trimmedQuery && p.label.endsWith('/')) ||
-                                (fs.existsSync(globPatternToUse) && fs.statSync(globPatternToUse).isDirectory());
-
-            if (isLikelyDir && !globPatternToUse.endsWith('/**') && !globPatternToUse.includes('*')) {
-                globPatternToUse = path.join(globPatternToUse, '**', '*').replace(/\\/g, '/');
-                isDirectoryExpansion = true;
-                logger.info(`Input "${trimmedQuery}" looks like directory. Using glob pattern: ${globPatternToUse}`);
-            }
+            let isActualDirectory = false;
 
             try {
-                const globOptions = { nodir: true, cwd: process.cwd(), ignore: ignorePatterns, dot: true, absolute: false };
-                const foundFiles = globSync(globPatternToUse, globOptions).map(p => p.replace(/\\/g, '/'));
+                 // Sync check is okay here to determine pattern before async glob
+                 const stats = fsSync.existsSync(globPatternToUse) ? fsSync.statSync(globPatternToUse) : null;
+                 isActualDirectory = stats?.isDirectory() ?? false;
+            } catch (statError) {
+                 logger.warn(`Could not stat path '${globPatternToUse}': ${statError.message}`);
+            }
+
+            // --- Expand directory pattern if necessary ---
+            if (isActualDirectory && !globPatternToUse.endsWith('/') && !globPatternToUse.includes('*')) {
+                globPatternToUse = path.join(globPatternToUse, '**').replace(/\\/g, '/');
+                isDirectoryExpansion = true;
+                logger.info(`Input '${trimmedQuery}' is a directory. Using glob pattern: ${globPatternToUse}`);
+            } else if (globPatternToUse.endsWith('/')) {
+                 globPatternToUse = path.join(globPatternToUse, '**').replace(/\\/g, '/');
+                 isDirectoryExpansion = true;
+                 logger.info(`Input '${trimmedQuery}' ends with '/'. Using glob pattern: ${globPatternToUse}`);
+            }
+            // --- Use async glob to find matching files ---
+            try {
+                const globOptions = {
+                    nodir: true, // Only collect files
+                    cwd: process.cwd(),
+                    ignore: ignorePatterns,
+                    dot: true,
+                    absolute: false
+                };
+                // Use the ASYNC glob here
+                const foundFiles = await glob(globPatternToUse, globOptions);
+                const normalizedFoundFiles = foundFiles.map(p => p.replace(/\\/g, '/'));
+
                 const currentFileCount = collectedFiles.size;
-                const updatedFiles = new Set([...collectedFiles, ...foundFiles]);
+                const updatedFiles = new Set([...collectedFiles, ...normalizedFoundFiles]);
                 const newFilesAdded = updatedFiles.size - currentFileCount;
                 setCollectedFiles(updatedFiles); // Update parent state
 
-                let message = `Found ${foundFiles.length} files matching "${globPatternToUse}"${isDirectoryExpansion ? ` (expanded from directory "${trimmedQuery}")` : ""}. Added ${newFilesAdded} new file(s). Total: ${updatedFiles.size}.`;
-                message += " Enter next pattern, select suggestion, or leave empty and press Enter to finish.";
+                let message = `Found ${normalizedFoundFiles.length} file(s) matching '${globPatternToUse}'${isDirectoryExpansion ? ` (expanded from '${trimmedQuery}')` : ''}. Added ${newFilesAdded} new file(s). Total: ${updatedFiles.size}.`;
+                // Update status message based on whether autocomplete is ready
+                 if (loadingPaths) {
+                     message += ' (Autocomplete still loading) Enter next pattern/path, or leave empty and press Enter to finish.';
+                 } else {
+                     message += ' Enter next pattern/path, select suggestion, or leave empty and press Enter to finish.';
+                 }
                 setLocalStatus(message);
+
             } catch (error) {
-                setLocalStatus(`Error processing glob "${globPatternToUse}"${isDirectoryExpansion ? ` (expanded from directory "${trimmedQuery}")` : ""}: ${error.message}. Please try again.`);
-                logger.error(`Error processing glob "${globPatternToUse}" (original input: "${trimmedQuery}"):`, error);
+                 const errorMsg = `Error processing glob '${globPatternToUse}'${isDirectoryExpansion ? ` (expanded from '${trimmedQuery}')` : ''}: ${error.message}. Please try again.`;
+                setLocalStatus(errorMsg);
+                logger.error(`Error processing glob '${globPatternToUse}' (original input: '${trimmedQuery}'):`, error);
             }
-            setGlobQuery(""); // Clear input field after processing a pattern/path
+            setGlobQuery(''); // Clear input field
 
         } else {
             // --- Empty query, no files collected yet ---
-            setLocalStatus("No files collected yet. Please enter a glob pattern or directory name to find files.");
-             setGlobQuery(""); // Clear input just in case
+             let message = 'No files collected yet. Please enter a glob pattern or directory name to find files';
+             if (loadingPaths) {
+                 message += ' (Autocomplete still loading).';
+             } else {
+                 message += ', or select a suggestion.';
+             }
+            setLocalStatus(message);
+             setGlobQuery('');
         }
     };
 
-    // --- Handlers for AutoComplete ---
-
-    // Called when Enter is pressed in TextInput *and* there are NO suggestions
+    // --- Handlers for AutoComplete --- (Unchanged)
     const handleTextSubmit = (textValue) => {
-        logger.info(`Text submitted directly (no suggestions): ${textValue}`);
-        processQuery(textValue); // Process the raw text
+        logger.info(`Text submitted directly (no suggestions or loading): ${textValue}`);
+        processQuery(textValue);
     };
-
-    // Called when a suggestion is selected (by click OR by Enter when suggestions exist)
     const handleSuggestionSelect = (item) => {
-         logger.info(`Suggestion selected (via click or Enter): ${item.label}`);
-         processQuery(item.label); // Process the selected suggestion's label
+         logger.info(`Suggestion selected: ${item.label}`);
+         processQuery(item.label);
     };
 
-    // Display collected files (unchanged)
+    // --- Display Collected Files --- (Unchanged)
     const displayFiles = Array.from(collectedFiles).sort();
     const maxFilesToShow = 10;
     const truncated = displayFiles.length > maxFilesToShow;
-    const filesString = displayFiles.slice(0, maxFilesToShow).join("\n  ") + (truncated ? `\n  ... (${collectedFiles.size - maxFilesToShow} more)` : "");
+    const filesString = displayFiles.slice(0, maxFilesToShow).join('\n  ') + (truncated ? `\n  ... (${collectedFiles.size - maxFilesToShow} more)` : '');
     const fileListContent = collectedFiles.size > 0
         ? <Text dimColor>{`  ${filesString}`}</Text>
         : <Text dimColor>(No files collected yet)</Text>;
 
+
+    // --- Render Logic ---
     return (
-        <Box flexDirection="column" padding={1} borderStyle="round" borderColor="blue" minWidth={60}>
-            {/* Header and Status (unchanged) */}
+        <Box flexDirection='column' padding={1} borderStyle='round' borderColor='blue' minWidth={60}>
+            {/* Header */}
             <Box paddingX={1} marginBottom={1}>
-                <Text color="blue" bold>--- Pack Files: Glob Input ---</Text>
+                <Text color='blue' bold>--- Pack Files: Add Files ---</Text>
             </Box>
+            {/* Status */}
             {localStatus && (
-                <Box paddingX={1} marginBottom={1}>
-                    <Text wrap="wrap" color="yellow">{localStatus}</Text>
+                <Box paddingX={1} marginBottom={1} minHeight={2}>
+                    <Text wrap='wrap' color='yellow'>{localStatus}</Text>
                 </Box>
             )}
 
-            {/* Collected Files Display (unchanged) */}
-            <Box flexDirection="column" marginBottom={1} paddingX={1}>
+            {/* Collected Files Display */}
+            <Box flexDirection='column' marginBottom={1} paddingX={1}>
                 <Text>Collected Files ({collectedFiles.size}):</Text>
-                <Box marginLeft={1}>{fileListContent}</Box>
+                 <Box marginLeft={1} minHeight={2} maxHeight={maxFilesToShow + 2} overflowY='hidden'>
+                     {fileListContent}
+                 </Box>
             </Box>
 
             {/* AutoComplete Component */}
-            <Box borderStyle="round" padding={1} marginX={1} marginBottom={1} flexDirection="column">
+            <Box borderStyle='round' padding={1} marginX={1} marginBottom={1} flexDirection='column'>
                 <Text>Glob Pattern / Path:</Text>
-                 {loadingPaths ? (
-                    <Box marginLeft={1}><Text dimColor>Loading paths...</Text></Box>
-                 ) : (
-                    <AutoComplete
-                        value={globQuery}
-                        onChange={setGlobQuery}
-                        onSubmit={handleTextSubmit}          // Use handler for text submission
-                        onSuggestionSelect={handleSuggestionSelect} // Use handler for suggestion selection
-                        items={availablePaths}
-                        placeholder="(e.g., src/, *.js, my_file.txt)"
-                        limit={10}
-                    />
-                 )}
+                 {/* Input field is always available */}
+                 <AutoComplete
+                    value={globQuery}
+                    onChange={setGlobQuery}
+                    onSubmit={handleTextSubmit}
+                    onSuggestionSelect={handleSuggestionSelect}
+                    // Only provide items when loading is complete
+                    items={loadingPaths ? [] : availablePaths}
+                    placeholder={loadingPaths ? 'Loading suggestions... Type pattern anyway' : '(e.g., src/, *.js, or select suggestion)'}
+                    limit={10}
+                 />
+                 {/* Optional explicit loading indicator separate from placeholder */}
+                 {loadingPaths && <Box marginLeft={1}><Text dimColor>Loading suggestions...</Text></Box>}
             </Box>
 
-             {/* Footer Hint (unchanged) */}
+            {/* Footer Hint */}
             <Box paddingX={1}>
-                <Text color="dim">Enter adds files/selects suggestion. Empty Enter copies XML. ESC returns to menu.</Text>
+                <Text color='dim'>Enter adds files/selects suggestion. Empty Enter copies XML. ESC returns to menu.</Text>
             </Box>
         </Box>
     );

@@ -2,11 +2,15 @@
 import fs from 'fs';
 import path from 'path';
 import util from 'util';
+import os from 'os';
 
 
-// Define the log file path - always in the current working directory
-const logFilePath = path.join(process.cwd(), 'log.log');
+// Define the log file path - using a temporary directory
+const logFilePath = path.join(os.tmpdir(), 'vibemode.log');
 
+process.on('exit', () => {
+    console.log('Logs saved to:', logFilePath);
+});
 // Create a writable stream in append mode ('a')
 // clear the file first
 fs.writeFileSync(logFilePath, '');
