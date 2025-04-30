@@ -17,4 +17,13 @@ await esbuild.build({
     loader: { '.js': 'jsx' },
     platform: 'node',
     target: ['esnext'],
+    banner: {
+      js: `#!/usr/bin/env node
+  import { createRequire as topLevelCreateRequire } from 'module';
+  const require   = topLevelCreateRequire(import.meta.url);
+  // const { fileURLToPath } = require('url');
+  const { dirname }       = require('path');
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname  = dirname(__filename);
+  `}
   });
