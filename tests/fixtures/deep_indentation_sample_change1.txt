@@ -1,0 +1,28 @@
+--- a/fixtures/deep_indentation_sample.py
++++ b/fixtures/deep_indentation_sample.py
+@@ -5,7 +5,7 @@
+     DEFAULTS = {
+         "opt_level": 2,
+         "targets": ["x86", "arm"],
++        "targets": ["x86", "arm", "riscv"], # Add riscv target
+         "features": {"simd": True, "opencl": False},
+     }
+ 
+@@ -47,6 +47,8 @@
+         base = {"arch": arch}
+         if arch == "x86":
+             base["flags"] = ["-mavx2" if self.config["features"]["simd"] else "-msse2"]
++        elif arch == "riscv": # Configure RISC-V flags
++            base["flags"] = ["-march=rv64gc"]
+         else:
+             base["flags"] = ["-mfpu=neon"] if self.config["features"]["simd"] else []
+         return base
+@@ -59,6 +61,8 @@
+         passes = ["inline", "dce"]
+         if arch == "arm" and self.config["opt_level"] > 2:
+             passes.append("vectorize")
++        elif arch == "riscv" and self.config["opt_level"] >= 2: # Enable vectorize for RISC-V at O2+
++            passes.append("vectorize")
+         return passes
+ 
+     def _apply_pass(self, pass_name, cfg):

@@ -4,7 +4,7 @@ import { Box, Text, useApp, useInput } from 'ink'; // Added useInput
 import readline from 'readline';
 import fs from 'fs';
 import { applyEdit, getModifiedFiles } from '../editor.js';
-import { writeDiff } from '../writeDiff.js';
+import { writeDiffToFile } from '../writeDiff.js';
 import logger from '../logger.js';
 
 const ApplyEditsUI = ({ //NOSONAR - Ignore complexity for now
@@ -129,7 +129,7 @@ const ApplyEditsUI = ({ //NOSONAR - Ignore complexity for now
                     if (!fs.existsSync(filePath)) throw new Error(`File not found`);
                     const fileContent = fs.readFileSync(filePath, "utf8");
                     const result = await applyEdit(trimmedContent, filePath, fileContent);
-                    const errors = await writeDiff(filePath, result);
+                    const errors = await writeDiffToFile(filePath, result);
                     if (errors) throw new Error(errors);
                     logger.info(`Successfully applied edit to ${filePath}`);
                     currentStatus = "done";
@@ -245,7 +245,7 @@ const ApplyEditsUI = ({ //NOSONAR - Ignore complexity for now
 
                 // Call applyEdit again with original paste content and current file content
                 const result = await applyEdit(originalContent, filePath, fileContent); // Use originalContentRef.current
-                const errors = await writeDiff(filePath, result);
+                const errors = await writeDiffToFile(filePath, result);
                 if (errors) throw new Error(errors);
 
                 logger.info(`Successfully applied RETRY edit to ${filePath}`);
