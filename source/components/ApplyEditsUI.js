@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useApp, useInput } from 'ink'; // Added useInput
 import readline from 'readline';
 import fs from 'fs';
-import { applyEdit, applyEditInFull, getModifiedFiles } from '../editor.js';
+import { applyEdit, getModifiedFiles } from '../editor.js';
 import { writeDiff } from '../writeDiff.js';
 import logger from '../logger.js';
 

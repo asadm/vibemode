@@ -145,30 +145,3 @@ export async function getModifiedFiles(userRequest){
     // console.log(response.choices[0].message);
     return JSON.parse(response.choices[0].message.content);
 }
-
-export async function applyEditInFull(content, filePath, currentFileContent){
-    const ModifiedFile = z.object({
-        fileContent: z.string(),
-      });
-    const openai = getOpenai();
-    const response = await openai.chat.completions.create({
-        model: "gemini-2.0-flash",//"gemini-2.5-pro-preview-03-25",
-        messages: [
-            { role: "system", content: systemPromptFullEdit(filePath) },
-            {
-                role: "user",
-                content: "Original file content:\n\n\`\`\`\n" + currentFileContent + "\n\`\`\`",
-            },
-            {
-                role: "user",
-                content: content,
-            }
-        ],
-        response_format: zodResponseFormat(ModifiedFile),
-        max_completion_tokens: 65536
-    });
-
-    logger.info("full edit response: ", filePath, response.choices[0].message.content);
-
-    return JSON.parse(response.choices[0].message.content);
-}
