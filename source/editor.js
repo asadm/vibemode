@@ -121,7 +121,6 @@ export async function applyEdit(content, filePath, currentFileContent, lastRespo
         ],
     });
 
-    // console.log(response.choices[0].message);
     return response.choices[0].message.content;
 }
 
