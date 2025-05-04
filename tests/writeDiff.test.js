@@ -123,39 +123,6 @@ THIS REPLACE WONT HAPPEN
         // The function processes sequentially but returns the error report, not partially modified content.
     });
 
-    test('should return error string detailing all failures', () => {
-        const changes = `
-<<<<<<< SEARCH
-NON_EXISTENT_1
-=======
-REPLACE_1
->>>>>>> REPLACE
-
-<<<<<<< SEARCH
-Line 2 with needle
-=======
-Line 2 REPLACED (but won't apply)
->>>>>>> REPLACE
-
-<<<<<<< SEARCH
-NON_EXISTENT_2
-=======
-REPLACE_2
->>>>>>> REPLACE
-`;
-        const result = applyDiff(initialContent, changes);
-        assert.strictEqual(typeof result, 'string');
-        assert.match(result, /Failed to apply all patches:/);
-        // Check first failure
-        assert.match(result, /Change #1 failed: Search pattern not found./);
-        assert.match(result, /--- Search Pattern ---\nNON_EXISTENT_1\n----------------------/);
-        // Check second failure (which is the 3rd block overall)
-        assert.match(result, /Change #3 failed: Search pattern not found./);
-        assert.match(result, /--- Search Pattern ---\nNON_EXISTENT_2\n----------------------/);
-        // Ensure change #2 isn't listed as failed
-        assert.doesNotMatch(result, /Change #2 failed/);
-    });
-
     // --- Edge Cases ---
 
      test('should handle empty original content correctly (failure)', () => {
@@ -274,5 +241,37 @@ some content
         // This assertion WILL FAIL with current applyDiff
        assert.strictEqual(result, expectedContent, 'Test failed: Expected replacement despite leading blank line and incorrect indent.');
   });
+
+  test('should return error string for the first failure encountered', () => {
+    const changes = `
+<<<<<<< SEARCH
+NON_EXISTENT_1
+=======
+REPLACE_1
+>>>>>>> REPLACE
+
+<<<<<<< SEARCH
+Line 2 with needle
+=======
+Line 2 REPLACED (this won't be reached)
+>>>>>>> REPLACE
+
+<<<<<<< SEARCH
+NON_EXISTENT_2
+=======
+REPLACE_2
+>>>>>>> REPLACE
+`;
+    const result = applyDiff(initialContent, changes);
+    assert.strictEqual(typeof result, 'string');
+    assert.match(result, /Failed to apply all patches:/);
+    // Check ONLY the first failure is reported
+    assert.match(result, /Change #1 failed: Search pattern not found \(even ignoring whitespace\)/);
+    assert.match(result, /--- Search Pattern ---\nNON_EXISTENT_1\n----------------------/);
+    // Ensure subsequent potential failures or successes are NOT mentioned
+    assert.doesNotMatch(result, /Change #2/);
+    assert.doesNotMatch(result, /Change #3/);
+    assert.doesNotMatch(result, /NON_EXISTENT_2/);
+});
 
 });
