@@ -13,7 +13,7 @@
 		"build": "babel --out-dir=dist source",
 		"bundle": "rm -rf dist && NODE_ENV=production node bundle.js",
 		"dev": "babel --out-dir=dist --watch source",
-		"test": "prettier --check . && xo && ava",
+		"test": "node --test tests/writeDiff.test.js",
 		"prepublishOnly": "npm run bundle"
 	},
 	"files": [
