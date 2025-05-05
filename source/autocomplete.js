@@ -3,72 +3,66 @@ import React from 'react';
 import Select from 'ink-select-input';
 import TextInput from 'ink-text-input';
 import { Box, Text } from 'ink';
-import logger from './logger.js'; // Added for debugging potential double calls
+import logger from './logger.js';
 
 // Helpers -------------------------------------------------------------------
 const noop = () => {};
 const not = a => !a;
 const isEmpty = arr => arr.length === 0;
-const getMatchDefault = input => ({label}) => input.length > 0 && label.toLowerCase().startsWith(input.toLowerCase());
+// Removed: getMatchDefault helper function is no longer used
 
 // AutoComplete --------------------------------------------------------------
 
 const AutoComplete = ({
     value = '',
     placeholder = '',
-    items = [],
-    getMatch = getMatchDefault,
+    items = [], // Modified: Now expects pre-filtered items from parent
+    // Removed: getMatch prop is no longer needed
     onChange = noop,
-    onSubmit = noop,           // For submitting the TEXT value (when no suggestions)
-    onSuggestionSelect = noop, // For selecting a suggestion (click OR Enter/Select action)
+    onSubmit = noop,
+    onSuggestionSelect = noop,
     indicatorComponent,
     itemComponent,
     limit,
 }) => {
-    const matches = items.filter(getMatch(value));
+    // Modified: Items are assumed to be pre-filtered, no internal filtering needed
+    const matches = items;
     const hasSuggestion = not(isEmpty(matches));
 
-    // Handler specifically for when an item is selected from the list (click or Enter on highlighted item)
-    const handleDirectListSelect = (item) => {
-        // logger.info(`AutoComplete: handleDirectListSelect called with: ${JSON.stringify(item)}`); // Debug
-        onSuggestionSelect(item); // Call the parent's handler
+    // ... (handleDirectListSelect unchanged) ...
+     const handleDirectListSelect = (item) => {
+        onSuggestionSelect(item);
     };
 
-    // Handler for when Enter is pressed *within the TextInput*
-    const handleTextInputSubmit = (submittedValue) => { // submittedValue is passed by ink-text-input
-        // logger.info(`AutoComplete: handleTextInputSubmit called with: ${submittedValue}, hasSuggestion: ${hasSuggestion}`); // Debug
 
-        // *** MODIFIED LOGIC ***
-        // Only call the parent's onSubmit (for raw text) if there are NO suggestions.
-        // If suggestions ARE visible, pressing Enter in the TextInput itself should
-        // ideally do nothing, letting the Select component handle the Enter press
-        // via its own onSelect mechanism (which triggers handleDirectListSelect).
+    // ... (handleTextInputSubmit unchanged) ...
+     const handleTextInputSubmit = (submittedValue) => {
         if (!hasSuggestion) {
             onSubmit(submittedValue);
         }
-        // Implicitly do nothing if suggestions are present, assuming Select handles it.
     };
+
 
     return (
         <Box flexDirection="column">
-            {/* Text Input */}
-            <Box>
+            {/* ... (TextInput unchanged) ... */}
+             <Box>
                 <TextInput
                     value={value}
                     placeholder={placeholder}
                     onChange={onChange}
-                    // Pass the actual submitted value to the handler
-                    onSubmit={(submittedValue) => handleTextInputSubmit(submittedValue)}
+                    onSubmit={handleTextInputSubmit}
                 />
             </Box>
+
 
             {/* Suggestions List */}
             {hasSuggestion && (
                 <Box marginTop={1}>
                     <Select
-                        items={matches}
-                        onSelect={handleDirectListSelect} // Use specific handler for Select actions
-                        focus={hasSuggestion} // Let Select handle focus and Enter when visible
+                        items={matches} // Modified: Use the pre-filtered 'matches' directly
+                        onSelect={handleDirectListSelect}
+                        focus={hasSuggestion}
                         indicatorComponent={indicatorComponent}
                         itemComponent={itemComponent}
                         limit={limit}

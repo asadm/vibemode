@@ -1,5 +1,5 @@
 // source/components/PackFilesUI.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react'; // Added useMemo
 import { Box, Text } from 'ink';
 import { glob } from 'glob'; // Still need async glob
 import fsSync from 'fs'; // Keep sync fs for specific checks if needed (like in processQuery)
@@ -7,6 +7,7 @@ import fs from 'fs/promises'; // Import promises API for async readdir
 import path from 'path';
 import clipboardy from 'clipboardy';
 import ignore from 'ignore'; // <-- Import the ignore package
+import Fuse from 'fuse.js'; // <-- Import Fuse.js
 import logger from '../logger.js';
 import AutoComplete from '../autocomplete.js';
 
@@ -43,6 +44,7 @@ const PackFilesUI = ({
     const [localStatus, setLocalStatus] = useState('Scanning directories for autocomplete... You can start typing patterns now.');
     const [availablePaths, setAvailablePaths] = useState([]);
     const [loadingPaths, setLoadingPaths] = useState(true);
+    const [fuseInstance, setFuseInstance] = useState(null); // <-- State for Fuse instance
 
     // --- Parallel Directory Scan Effect ---
     useEffect(() => {
@@ -128,7 +130,7 @@ const PackFilesUI = ({
                                         .map(p => ({ label: p })); // Format for AutoComplete
 
                 const duration = (Date.now() - startTime) / 1000;
-                setAvailablePaths(finalItems);
+                setAvailablePaths(finalItems); // Set the state with all found paths
                 const statusMsg = `Loaded ${finalItems.length} potential paths (${duration.toFixed(2)}s). Enter pattern/path, select suggestion, or Enter on empty to finish.`;
                 setLocalStatus(statusMsg);
                 logger.info(`Parallel scan finished. ${statusMsg}`);
@@ -146,6 +148,38 @@ const PackFilesUI = ({
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [ignorePatterns]); // Rerun if ignorePatterns change
+
+
+    // --- Effect to Initialize/Update Fuse.js Instance ---
+    useEffect(() => {
+        if (!loadingPaths && availablePaths.length > 0) {
+            logger.info(`Initializing Fuse.js with ${availablePaths.length} items.`);
+            const fuseOptions = {
+                // isCaseSensitive: false,
+                // includeScore: false,
+                shouldSort: true, // Sort by score
+                // includeMatches: false,
+                // findAllMatches: false,
+                // minMatchCharLength: 1,
+                // location: 0,
+                threshold: 0.4, // Adjust for desired fuzziness (0=exact, 1=match anything)
+                // distance: 100,
+                // useExtendedSearch: false,
+                // ignoreLocation: false,
+                // ignoreFieldNorm: false,
+                // fieldNormWeight: 1,
+                keys: [ // The key within our items objects to search
+                    "label"
+                ]
+            };
+            setFuseInstance(new Fuse(availablePaths, fuseOptions));
+            logger.info("Fuse.js instance created.");
+        } else {
+            // Clear fuse instance if paths are loading or empty
+            setFuseInstance(null);
+            logger.info("Fuse.js instance cleared (loading or no paths).");
+        }
+    }, [availablePaths, loadingPaths]); // Re-run when paths load or change
 
 
     // --- Core Handler (processQuery) --- remains largely the same ---
@@ -275,15 +309,32 @@ const PackFilesUI = ({
         }
     };
 
-    // --- Handlers for AutoComplete --- (Unchanged)
+    // --- Handlers for AutoComplete ---
     const handleTextSubmit = (textValue) => {
         logger.info(`Text submitted directly (no suggestions or loading): ${textValue}`);
         processQuery(textValue);
     };
     const handleSuggestionSelect = (item) => {
          logger.info(`Suggestion selected: ${item.label}`);
-         processQuery(item.label);
+         processQuery(item.label); // Process the selected label
     };
+
+    // --- Calculate Filtered Items for AutoComplete ---
+    // This is where the fuzzy search actually happens based on the current input `globQuery`
+    const filteredItems = useMemo(() => {
+        if (!globQuery || globQuery.trim() === '' || !fuseInstance) {
+            // If no input or fuse not ready, return empty array (no suggestions)
+            // Alternatively, return `availablePaths` if you want to show all on empty input
+            return [];
+        }
+        logger.info(`Filtering with Fuse for: '${globQuery}'`);
+        const results = fuseInstance.search(globQuery);
+        // Fuse returns results with item, refIndex, score. We just need the items.
+        const matchedItems = results.map(result => result.item);
+        logger.info(`Fuse returned ${matchedItems.length} items.`);
+        return matchedItems;
+    }, [globQuery, fuseInstance]); // Recalculate when input or fuse instance changes
+
 
     // --- Display Collected Files --- (Unchanged)
     const displayFiles = Array.from(collectedFiles).sort();
@@ -319,15 +370,16 @@ const PackFilesUI = ({
 
             {/* AutoComplete Component */}
             <Box borderStyle='round' padding={1} marginX={1} marginBottom={1} flexDirection='column'>
-                <Text>Glob Pattern / Path:</Text>
+                <Text>Glob Pattern / Path (Fuzzy Search):</Text>
                  {/* Input field is always available */}
                  <AutoComplete
                     value={globQuery}
                     onChange={setGlobQuery}
-                    onSubmit={handleTextSubmit}
-                    onSuggestionSelect={handleSuggestionSelect}
-                    // Only provide items when loading is complete
-                    items={loadingPaths ? [] : availablePaths}
+                    onSubmit={handleTextSubmit}         // Called when Enter pressed in text input *without* suggestions
+                    onSuggestionSelect={handleSuggestionSelect} // Called when a suggestion is selected (Enter on list item or click)
+                    // Pass the PRE-FILTERED items based on the fuzzy search
+                    items={loadingPaths ? [] : filteredItems}
+                    // We no longer need getMatch prop here as filtering is done *before* passing items
                     placeholder={loadingPaths ? 'Loading suggestions... Type pattern anyway' : '(e.g., src/, *.js, or select suggestion)'}
                     limit={10}
                  />
