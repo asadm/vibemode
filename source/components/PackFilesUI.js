@@ -200,6 +200,7 @@ const PackFilesUI = ({
                 try {
                     // ... (XML generation logic - unchanged, uses fsSync for checks) ...
                      const filesArray = Array.from(collectedFiles).sort();
+                    let instructions = '<instructions>When suggesting changes in these files, respond with changed parts only, but not as diff. Always include filepaths in full.</instructions>\n\n';
                     let dirStructure = '<directory_structure>\n';
                     filesArray.forEach(file => { dirStructure += `  ${escapeXml(file)}\n`; });
                     dirStructure += '</directory_structure>\n\n';
@@ -222,7 +223,7 @@ const PackFilesUI = ({
                         }
                     });
                     fileContents += '</files>';
-                    const finalXmlContent = dirStructure + fileContents;
+                    const finalXmlContent = instructions + dirStructure + fileContents;
                     const tokenCount = getEncoder().encode(finalXmlContent).length;
                     logger.info(`Generated XML content for ${filesArray.length} files, token count: ${tokenCount}`);
                     clipboardy.write(finalXmlContent).then(() => {
