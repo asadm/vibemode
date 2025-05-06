@@ -200,6 +200,8 @@ export function applyDiff(originalContent, changes) {
     if (parsedChanges.length === 0) {
         if (changes.trim() !== '' && !/<<<<<<< SEARCH\n[\s\S]*?\n=======\n[\s\S]*?\n>>>>>>> REPLACE/s.test(changes)) {
            logger.warn(`Warning: The provided changes string did not contain any valid SEARCH/REPLACE blocks.`);
+           // return errors
+           return `Failed to apply all patches: The provided changes string did not contain any valid SEARCH/REPLACE blocks.`;
         } else if (changes.trim() === '') {
             logger.info(`No changes parsed from the empty diff string.`);
         }

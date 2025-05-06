@@ -129,6 +129,7 @@ const ApplyEditsUI = ({ //NOSONAR - Ignore complexity for now
                     if (!fs.existsSync(filePath)) throw new Error(`File not found`);
                     const fileContent = fs.readFileSync(filePath, "utf8");
                     const result = await applyEdit(trimmedContent, filePath, fileContent);
+                    logger.info(`Edits formatted: ${JSON.stringify(result)}`);
                     const errors = await writeDiffToFile(filePath, result);
                     if (errors) throw new Error(errors);
                     logger.info(`Successfully applied edit to ${filePath}`);

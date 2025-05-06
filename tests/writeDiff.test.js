@@ -90,10 +90,11 @@ Line 2 with needle
          assert.strictEqual(result, initialContent);
      });
 
-     test('should return original content if no valid diff blocks are found', () => {
+     test('should return error if no valid diff blocks are found', () => {
          const changes = `Some random text without markers.`;
          const result = applyDiff(initialContent, changes);
-         assert.strictEqual(result, initialContent);
+         assert.match(result, /Failed to apply all patches:/, 'Error message prefix mismatch');
+         assert.match(result, /The provided changes string did not contain any valid SEARCH\/REPLACE blocks./);
      });
 
     // --- Failure Scenarios ---

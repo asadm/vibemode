@@ -158,12 +158,15 @@ const PackFilesUI = ({
                 // isCaseSensitive: false,
                 // includeScore: false,
                 shouldSort: true, // Sort by score
-                // includeMatches: false,
-                // findAllMatches: false,
+                 // findAllMatches: false,
+                 // minMatchCharLength: 1,
                 // minMatchCharLength: 1,
-                // location: 0,
                 threshold: 0.4, // Adjust for desired fuzziness (0=exact, 1=match anything)
                 // distance: 100,
+                includeMatches: true, // <-- Add this to get match indices
+                // includeScore: true, // Optional: for debugging relevance
+
+                // location: 0,
                 // useExtendedSearch: false,
                 // ignoreLocation: false,
                 // ignoreFieldNorm: false,
@@ -171,11 +174,11 @@ const PackFilesUI = ({
                 keys: [ // The key within our items objects to search
                     "label"
                 ]
-            };
-            setFuseInstance(new Fuse(availablePaths, fuseOptions));
-            logger.info("Fuse.js instance created.");
-        } else {
-            // Clear fuse instance if paths are loading or empty
+                };
+                setFuseInstance(new Fuse(availablePaths, fuseOptions));
+                logger.info("Fuse.js instance created with includeMatches.");
+            } else {
+                // Clear fuse instance if paths are loading or empty
             setFuseInstance(null);
             logger.info("Fuse.js instance cleared (loading or no paths).");
         }
@@ -315,9 +318,10 @@ const PackFilesUI = ({
         processQuery(textValue);
     };
     const handleSuggestionSelect = (item) => {
-         logger.info(`Suggestion selected: ${item.label}`);
-         processQuery(item.label); // Process the selected label
-    };
+         // item received here will have { label, value, matches }, but we only process the label
+          logger.info(`Suggestion selected: ${item.label}`);
+          processQuery(item.label); // Process the selected label
+     };
 
     // --- Calculate Filtered Items for AutoComplete ---
     // This is where the fuzzy search actually happens based on the current input `globQuery`
@@ -328,12 +332,32 @@ const PackFilesUI = ({
             return [];
         }
         logger.info(`Filtering with Fuse for: '${globQuery}'`);
-        const results = fuseInstance.search(globQuery);
-        // Fuse returns results with item, refIndex, score. We just need the items.
-        const matchedItems = results.map(result => result.item);
-        logger.info(`Fuse returned ${matchedItems.length} items.`);
-        return matchedItems;
-    }, [globQuery, fuseInstance]); // Recalculate when input or fuse instance changes
+            const results = fuseInstance.search(globQuery);
+            // Map results to include match indices
+            const mappedItems = results.map(result => {
+                // Fuse returns matches like [{ indices: [[start, end], ...], key: 'label', value: '...' }]
+                // Consolidate all indices for the 'label' key
+                let consolidatedIndices = [];
+                if (result.matches) {
+                    result.matches.forEach(match => {
+                        if (match.key === 'label' && match.indices) {
+                            consolidatedIndices = consolidatedIndices.concat(match.indices);
+                        }
+                    });
+                }
+                // Sort indices for correct rendering
+                consolidatedIndices.sort((a, b) => a[0] - b[0]);
+
+                return {
+                    label: result.item.label, // Original label
+                    value: result.item.label, // Value for selection
+                    matches: consolidatedIndices, // Pass the [start, end] pairs
+                };
+            });
+            // Update logger message if desired
+            logger.info(`Mapped ${mappedItems.length} items with match indices.`);
+            return mappedItems; // Return items with label, value, and matches
+        }, [globQuery, fuseInstance]); // Recalculate when input or fuse instance changes
 
 
     // --- Display Collected Files --- (Unchanged)
@@ -376,10 +400,11 @@ const PackFilesUI = ({
                     value={globQuery}
                     onChange={setGlobQuery}
                     onSubmit={handleTextSubmit}         // Called when Enter pressed in text input *without* suggestions
-                    onSuggestionSelect={handleSuggestionSelect} // Called when a suggestion is selected (Enter on list item or click)
+                    onSuggestionSelect={handleSuggestionSelect}
                     // Pass the PRE-FILTERED items based on the fuzzy search
                     items={loadingPaths ? [] : filteredItems}
                     // We no longer need getMatch prop here as filtering is done *before* passing items
+                    // Highlighting is handled by the modified AutoComplete component internally
                     placeholder={loadingPaths ? 'Loading suggestions... Type pattern anyway' : '(e.g., src/, *.js, or select suggestion)'}
                     limit={10}
                  />
