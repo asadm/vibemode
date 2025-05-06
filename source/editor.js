@@ -96,7 +96,7 @@ function getOpenai(){
     return openai;
 }
 
-export async function applyEdit(content, filePath, currentFileContent, lastResponse, errorsFromLastResponse){
+export async function applyEdit(instructionsContent, filePath, currentFileContent, lastResponse, errorsFromLastResponse){
     const openai = getOpenai();
     const response = await openai.chat.completions.create({
         model: "gemini-2.0-flash",
@@ -108,7 +108,7 @@ export async function applyEdit(content, filePath, currentFileContent, lastRespo
             },
             {
                 role: "user",
-                content: content,
+                content: instructionsContent,
             },
             lastResponse && {
                 role: "assistant",
