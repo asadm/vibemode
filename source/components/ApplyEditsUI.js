@@ -436,6 +436,7 @@ const ApplyEditsUI = ({ //NOSONAR - Ignore complexity for now
                 {countdown !== null && <Box marginTop={1} marginBottom={1} marginX={1} borderColor="yellow" borderStyle="single" paddingX={1} alignSelf="flex-start"><Text color="yellow"> Finalizing... Applying edits in {countdown} </Text></Box>}
                 <Box marginX={1} marginBottom={1} padding={1} borderStyle="single" borderColor="gray" minHeight={5}><Text dimColor wrap="end">{previewText || "(Paste content here...)"}</Text></Box>
                 <Box paddingX={1}><Text color="dim">Paste content now. Press Enter to apply. ESC returns to menu.</Text></Box>
+                <Box paddingX={1}><Text color="yellow" italic>Pro-tip: Ask model to "respond with changed parts only, but not as diff". Copy the entire response as markdown then.</Text></Box>
             </Box>
         );
     }
